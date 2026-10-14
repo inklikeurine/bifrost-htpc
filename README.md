@@ -86,7 +86,7 @@ Before the reinstall, copy off anything worth keeping. At minimum, the 12 custom
 - **What still updates normally:** the Flatpak runtime Moonfin runs on comes from Flathub, so it updates with everything else. Flathub has to be set up on the box for the first install to work.
 - **The fix:** every Sunday, a timer runs a small update script. It asks GitHub for Moonfin's latest release, compares it with the installed version, and if it's newer, downloads that release's `.flatpak` and installs it over the old one. Settings and the server login are kept.
 
-## Dropout.tv
+### Dropout.tv
 
 - **Custom Plugin:** The dropout.tv leanback extension for firefox is located at https://github.com/inklikeurine/firefox-leanback-for-dropout
 - **How to sign:** sign it on addons.mozilla.org as "self-distributed" (unlisted, so it isn't public). This can run automatically in GitHub Actions on each release with `web-ext sign --channel unlisted`.
