@@ -1,11 +1,10 @@
 # HTPC Build — Kinoite + Plasma Bigscreen
 
 One setup that installs and behaves the same on any HTPC, whatever its hardware.
-Status: plan. Written 2026-10-13. Updated 2026-10-14.
 
 ## Goals
 
-- **Apps:** YouTube, Twitch, Moonlight, Jellyfin, dropout.tv. No Netflix or other commercial streaming services.
+- **Apps:** YouTube, Twitch, Moonlight, Jellyfin, dropout.tv (web app), Twitch.tv (web app). No Netflix or other commercial streaming services.
 - **Set-and-forget:** dead simple, as close to set-and-forget as possible.
 - **Same everywhere:** every box behaves the same and is rebuilt from the same files in git.
 - **Easy upkeep:** simple to maintain and update.
@@ -23,9 +22,9 @@ Status: plan. Written 2026-10-13. Updated 2026-10-14.
 | CPU | Intel Core i5-7500T |
 | RAM | 8 GB (7.6 GiB usable) |
 | Storage | 238.5 GB NVMe |
-| GPU | Intel HD Graphics 630: hardware decode for H.264, HEVC 10-bit, VP9 10-bit. **No AV1.** |
+| GPU | Intel HD Graphics 630: hardware decode for H.264, HEVC 10-bit, VP9 10-bit.|
 | Network | Wi-Fi only. No Ethernet connected. |
-| Remote | WeChip W1 air mouse (USB dongle). Its power and mouse-mode buttons send nothing the PC can see. |
+| Remote | WeChip W1 air mouse (USB dongle). |
 | TV | Roku TV, LAN only |
 
 Before the reinstall, copy off anything worth keeping. At minimum, the 12 custom wallpapers in `~/.local/share/wallpapers/`.
@@ -36,7 +35,7 @@ Before the reinstall, copy off anything worth keeping. At minimum, the 12 custom
 |---|---|
 | Model | Dell OptiPlex 3080 Micro (`D14U002`) |
 | CPU / RAM | **Unknown.** Ships with anything from a Celeron to an i5. Check with F2 at boot → System Information. |
-| GPU | Intel UHD 630 on i3/i5 models; weaker UHD 610 on Celeron/Pentium. Neither decodes AV1 in hardware. |
+| GPU | Intel UHD 630 on i3/i5 models; weaker UHD 610 on Celeron/Pentium. |
 | Video out | Rear HDMI 1.4: 4K at up to 30 Hz. |
 | Network | M.2 2230 Wi-Fi slot, **no card installed**. Intel AX200 or AX210 is the safe Linux pick. Open the case first: if no white and black antenna cables reach the slot, you also need a 3080/5080/7080 MFF antenna kit. |
 | TV | LG, LAN only |
@@ -50,13 +49,15 @@ Before the reinstall, copy off anything worth keeping. At minimum, the 12 custom
 
 ## Setup method
 
-**Decided: a git repo with one setup script, run on a fresh Kinoite install.**
+**A git repo with one setup script, run on a fresh Kinoite install.**
 
 - **What the repo holds:** the setup script, the Flatpak list, Firefox `policies.json`, launchers for Twitch and Dropout, a `wallpapers/` folder, the autologin setting, and user config (screen-lock off, Bigscreen favorites, any notification fix that turns out to be needed).
 - **New box:** install Kinoite, clone the repo, run the script, reboot.
 - **Making changes:** write the script so running it again is harmless. Changing a setting then means editing the repo and re-running the script on each box.
+  - After repo is stable, possibly have the box do a weekly check for updates to script, automated run.
 - **Maintenance:** Fedora builds and ships the OS. You only touch the repo when you change apps or settings.
 - **Hardware-specific settings stay out of the repo.** Screen resolution, hostname and Wi-Fi are set on each box, so the repo itself never differs between machines.
+  - May want to set hostname / IP / wif-fi connection via this script, so box is already setup. This may be better suited to machine-specific dotfiles.
 
 ## Login
 
@@ -70,7 +71,7 @@ Before the reinstall, copy off anything worth keeping. At minimum, the 12 custom
 | Jellyfin | Moonfin (Flatpak bundle, see below) | Turn on Moonfin's TV mode on each box |
 | Moonlight | Moonlight (Flatpak `com.moonlight_stream.Moonlight`) | Preferred game streaming app |
 | Steam Link | Steam Link (Flatpak `com.valvesoftware.SteamLink`) | Backup to Moonlight |
-| Twitch | twitch.tv in Firefox, full screen | The site is built for a mouse; test how it navigates with your remote |
+| Twitch | twitch.tv in Firefox, full screen | potentially develop a simple Leanback UI. |
 | Dropout | dropout.tv in Firefox, full screen, with your extension | The extension supplies the 10-foot UI. |
 
 **The "web apps":** each one is a launcher file that opens Firefox in kiosk mode (full screen, no toolbars) with its own profile, for example `firefox --kiosk --no-remote -P twitch https://www.twitch.tv`. The setup script creates the profiles and launchers, and both show up as normal tiles in Bigscreen. **Test how to close them with the remote,** since kiosk mode has no close button.
@@ -84,14 +85,10 @@ Before the reinstall, copy off anything worth keeping. At minimum, the 12 custom
 - **Why:** Moonfin's build script makes the bundle without an update source, so Flatpak's normal updates (Discover, auto-updates) never see new Moonfin versions. The app shows a banner when a new version is out, but the only format Moonfin documents as updating in place is the AppImage.
 - **What still updates normally:** the Flatpak runtime Moonfin runs on comes from Flathub, so it updates with everything else. Flathub has to be set up on the box for the first install to work.
 - **The fix:** every Sunday, a timer runs a small update script. It asks GitHub for Moonfin's latest release, compares it with the installed version, and if it's newer, downloads that release's `.flatpak` and installs it over the old one. Settings and the server login are kept.
-- **Trust:** the file isn't signed, so you're trusting Moonfin's GitHub releases directly.
 
-### Jellyfin 12
+## Dropout.tv
 
-The Jellyfin server is on 12.0, which disabled the old sign-in method and removed Quick Connect's old GET request. Confirm Moonfin signs in (including through Quick Connect, if you use it) on the first install.
-
-## Your Firefox extension(s) from GitHub
-
+- **Custom Plugin:** The dropout.tv leanback extension for firefox is located at https://github.com/inklikeurine/firefox-leanback-for-dropout
 - **How to sign:** sign it on addons.mozilla.org as "self-distributed" (unlisted, so it isn't public). This can run automatically in GitHub Actions on each release with `web-ext sign --channel unlisted`.
 - **Where the policy file goes:** `/etc/firefox/policies/policies.json`. This is for the Firefox that comes preinstalled on Kinoite (`/etc` is writable on Kinoite). If you switch to the Flathub Firefox, the path is different, so recheck it.
 
@@ -100,7 +97,9 @@ The Jellyfin server is on 12.0, which disabled the old sign-in method and remove
 These are the only things that differ between machines. They're done once on each box, outside the repo.
 
 - **Hostname.**
-- **Network:** Ethernet if a cable can reach (better for Moonlight). Otherwise make sure there's a Linux-friendly Wi-Fi card; Intel cards are the safe pick.
+  - bifrost-{roomName} e.g. bifrost-bedroom, bifrost-livingroom, etc.
+- **Network:** Ethernet if a cable can reach (better for Moonlight). Otherwise Wi-Fi.
+  - All PC's expected to connect to the same wi-fi network.
 - **BIOS power setting:** set AC Recovery (or similar) to Power On, so the box comes back by itself after an outage.
 - **Moonfin:** sign in and turn on TV mode.
 - **TV:** LAN access only. Block its internet access at the router.
@@ -116,7 +115,8 @@ These are the only things that differ between machines. They're done once on eac
 - **Screen locking:** off.
 - **No global key remapping:** a remap changes the key for every app, so fixing one app can break another.
 - **KWallet:** Moonfin stores its server login in KWallet. Give the wallet a blank password so autologin doesn't trigger a password prompt when Moonfin opens.
-- **Moonfin update check:** every Sunday (see the Moonfin section).
+- **Moonfin update check:** every Sunday.
+- **Dropout extension update check:** every Sunday.
 
 ## Things to verify
 
@@ -133,15 +133,12 @@ These are the only things that differ between machines. They're done once on eac
 - Moonfin releases: https://github.com/Moonfin-Client/Moonfin-Core/releases
 - Moonfin bundle built without an update source: https://github.com/Moonfin-Client/Moonfin-Core/blob/main/build-linux.sh
 - Moonfin update banner: https://github.com/Moonfin-Client/Moonfin-Core/releases/tag/2.4.0
-- Jellyfin 12.0 release: https://jellyfin.org/posts/jellyfin-release-12.0/
 - Firefox preinstalled on Kinoite: https://fedoramagazine.org/how-i-customize-fedora-silverblue-and-fedora-kinoite/
 - Firefox policies.json location: https://firefox-admin-docs.mozilla.org/guides/policies-configuration/
 - Firefox add-on signing for enterprise installs: https://www.extensionworkshop.com/documentation/enterprise/enterprise-distribution
 - Self-distributed add-ons and update_url: https://extensionworkshop.com/documentation/publish/self-distribution/
-- Signing methods (web-ext sign, unlisted): https://developer.mozilla.org/Add-ons/Distribution
 - VacuumTube: https://flathub.org/en/apps/rocks.shy.VacuumTube
 - Dell OptiPlex 3080 Micro setup and specifications: https://static.bhphoto.com/lit_files/676698.pdf
 - Dell community, 3080 Micro 4K only over DisplayPort: https://www.dell.com/community/en/conversations/optiplex-desktops/new-4k-monitor-only-4k-on-dp-not-hdmi/662d7069904e1b4e08bc3b91
 - Dell service manual, WLAN card: https://www.dell.com/support/manuals/en-us/optiplex-3080-micro/optiplex3080_micro_sm/installing-the-wlan-card?guid=guid-6c04c358-c1f3-4d95-8a03-8bd9b3ee59df&lang=en-us
 - Intel media capabilities: https://www.intel.com/content/www/us/en/docs/onevpl/developer-reference-media-intel-hardware/1-1/overview.html
-- UHD 630 HDMI output limit (4K at 30 Hz): https://www.cpu-monkey.com/en/cpu-intel_core_i5_10500
