@@ -4,21 +4,27 @@
 # Run on a fresh Fedora Kinoite install, and again after any change to this repo.
 # Running it again is harmless: each step checks before it changes anything.
 #
-# Usage: sudo ./setup.sh [--user NAME] [--room NAME]
+# Usage: sudo ./setup.sh [--user NAME] [--room NAME] [--wifi]
 #   --user NAME  account to log in automatically (default: the account that ran sudo)
 #   --room NAME  set the hostname to bifrost-NAME, e.g. --room bedroom
+#   --wifi       ask for a Wi-Fi network and its password, and connect to it
+#
+# Each run's output is also added to /var/log/bifrost-setup.log.
 set -euo pipefail
 
 repo=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 user=${SUDO_USER:-}
 room=""
+wifi=false
+args=$*
 
-usage() { sed -n '2,10s/^# \{0,1\}//p' "${BASH_SOURCE[0]}"; }
+usage() { sed -n '2,13s/^# \{0,1\}//p' "${BASH_SOURCE[0]}"; }
 
 while (($#)); do
     case $1 in
         --user) user=${2:?--user needs a name}; shift 2 ;;
         --room) room=${2:?--room needs a name}; shift 2 ;;
+        --wifi) wifi=true; shift ;;
         -h | --help) usage; exit 0 ;;
         *) echo "Unknown option: $1" >&2; usage >&2; exit 2 ;;
     esac
@@ -42,7 +48,7 @@ put() {
 }
 
 if ((EUID != 0)); then
-    echo "Run this with sudo: sudo $0 $*" >&2
+    echo "Run this with sudo: sudo $0 $args" >&2
     exit 1
 fi
 if [[ -z $user || $user == root ]] || ! id "$user" >/dev/null 2>&1; then
@@ -53,6 +59,9 @@ if ! grep -q '^VARIANT_ID=kinoite' /etc/os-release; then
     echo "This isn't Fedora Kinoite." >&2
     exit 1
 fi
+
+exec > >(tee -a /var/log/bifrost-setup.log) 2>&1
+printf '\n===== %s: setup.sh %s\n' "$(date '+%F %T')" "$args"
 
 # A booted Kinoite install has /run/ostree-booted. A test container doesn't, so
 # rpm-ostree steps are skipped there.
@@ -73,6 +82,20 @@ if [[ -n $room ]]; then
         note "set to $want"
     else
         warn "couldn't set the hostname to $want"
+    fi
+fi
+
+# ---------------------------------------------------------------------------
+if $wifi; then
+    log "Wi-Fi"
+    read -rp "    Wi-Fi network name: " ssid </dev/tty
+    if nmcli -t -f NAME connection show | grep -qxF "$ssid"; then
+        note "a connection named $ssid already exists"
+    # --ask makes nmcli prompt for the password itself, so it never passes through this script.
+    elif nmcli --ask device wifi connect "$ssid" </dev/tty; then
+        note "connected to $ssid"
+    else
+        warn "couldn't connect to $ssid"
     fi
 fi
 
@@ -117,6 +140,16 @@ if ((${#to_install[@]})); then
 else
     note "all installed"
 fi
+# Fedora Flatpaks the Kinoite installer adds that an HTPC doesn't need.
+mapfile -t unwanted < <(read_list "$repo/config/flatpaks-remove.txt")
+to_remove=()
+for app in "${unwanted[@]}"; do
+    flatpak info --system "$app" >/dev/null 2>&1 && to_remove+=("$app")
+done
+if ((${#to_remove[@]})); then
+    note "removing ${to_remove[*]}"
+    flatpak uninstall --system --noninteractive -y "${to_remove[@]}"
+fi
 
 # ---------------------------------------------------------------------------
 log "System files"
@@ -139,8 +172,8 @@ fi
 
 # ---------------------------------------------------------------------------
 log "Automatic updates"
-# Stage OS updates in the background; the weekly reboot applies them. Discover's own
-# unattended updates also stay on, but it only runs inside the Plasma session.
+# Stage OS updates in the background; the weekly reboot applies them. Discover's
+# background updater is turned off per account below, so these timers do all updating.
 if grep -qx 'AutomaticUpdatePolicy=stage' /etc/rpm-ostreed.conf; then
     note "rpm-ostree already stages updates"
 else
@@ -275,6 +308,21 @@ with open(dest, "w", encoding="utf-8") as f:
 PY
 }
 
+# Apps hidden from the Bigscreen home screen. Bigscreen reads [Applications] blacklist
+# from applications-blacklistrc, and ~/.config/applications-blacklistrc overrides the copy
+# its envmanager rewrites in ~/.config/plasma-bigscreen/ at every login. Our key replaces
+# Bigscreen's, so its own defaults (envmanager/config.h, 6.7.5) are repeated here.
+bigscreen_hidden=(
+    waydroid.com.android.calculator2 waydroid.com.android.camera2 waydroid.com.android.contacts
+    waydroid.com.android.deskclock waydroid.com.android.documentsui waydroid.com.android.gallery3d
+    waydroid.com.android.inputmethod.latin waydroid.com.android.settings waydroid.org.lineageos.eleven
+    waydroid.org.lineageos.etar waydroid.org.lineageos.jelly waydroid.org.lineageos.recorder
+    org.kde.drkonqi.coredump.gui org.kde.kdeconnect.app org.kde.kdeconnect.sms plasma-bigscreen-swap-session
+)
+mapfile -t hidden < <(read_list "$repo/config/hidden-apps.txt")
+hidden=("${bigscreen_hidden[@]}" "${hidden[@]}")
+welcome_version=$(rpm -q --qf '%{version}' plasma-welcome 2>/dev/null || echo 1.0)
+
 mapfile -t accounts < <(getent passwd | awk -F: '$3 >= 1000 && $3 < 60000 && $7 !~ /(nologin|false)$/ {print $1}')
 for account in "${accounts[@]}"; do
     acct_home=$(getent passwd "$account" | cut -d: -f6)
@@ -305,6 +353,32 @@ for account in "${accounts[@]}"; do
     as_user kwriteconfig6 --file powerdevilrc --group AC --group SuspendAndShutdown --key AutoSuspendAction 0
     note "screen lock and auto-suspend off"
 
+    # Apps hidden from the home screen (config/hidden-apps.txt).
+    {
+        echo "[Applications]"
+        echo "blacklist=$(IFS=,; echo "${hidden[*]}")"
+    } >"$tmp"
+    as_user mkdir -p "$acct_home/.config/autostart"
+    if put "$tmp" "$acct_home/.config/applications-blacklistrc"; then
+        chown "$account:$group" "$acct_home/.config/applications-blacklistrc"
+    fi
+
+    # Welcome Center opens on first login (LastSeenVersion empty) and after big Plasma
+    # updates (ShowUpdatePage); stop both so it never lands on the TV.
+    as_user kwriteconfig6 --file plasma-welcomerc --group General --key ShowUpdatePage false
+    if [[ -z $(as_user kreadconfig6 --file plasma-welcomerc --group General --key LastSeenVersion) ]]; then
+        as_user kwriteconfig6 --file plasma-welcomerc --group General --key LastSeenVersion "$welcome_version"
+    fi
+    # No file indexing: there are no documents to search, and it costs CPU and disk.
+    as_user kwriteconfig6 --file baloofilerc --group "Basic Settings" --key Indexing-Enabled false
+    # No Discover notifier: the timers handle updates, and its notifications stall for
+    # ~25 s in Bigscreen, which has no notification service.
+    printf '[Desktop Entry]\nHidden=true\n' >"$tmp"
+    if put "$tmp" "$acct_home/.config/autostart/org.kde.discover.notifier.desktop"; then
+        chown "$account:$group" "$acct_home/.config/autostart/org.kde.discover.notifier.desktop"
+    fi
+    note "Welcome Center, file indexing and Discover's notifier off"
+
     # Bigscreen favorites, in the order of config/favorites.txt.
     as_user mkdir -p "$acct_home/.config"
     write_favorites "$tmp" "$acct_home"
@@ -316,6 +390,18 @@ for account in "${accounts[@]}"; do
 done
 
 # ---------------------------------------------------------------------------
+log "Connect with SSH"
+if ! compgen -G '/etc/ssh/ssh_host_*_key.pub' >/dev/null; then
+    ssh-keygen -A >/dev/null
+    note "generated SSH host keys"
+fi
+note "ssh $user@$(hostname -s).local"
+note "IPv4 addresses: $(hostname -I 2>/dev/null | tr ' ' '\n' | grep -v : | xargs)"
+note "host key fingerprints (check these on your first connection):"
+for key in /etc/ssh/ssh_host_*_key.pub; do
+    note "  $(ssh-keygen -lf "$key")"
+done
+
 log "Done"
 if $reboot_needed; then
     note "Reboot to finish: the new OS image with the layered packages is staged."

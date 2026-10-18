@@ -1,0 +1,10 @@
+# Fedora Flatpaks the Kinoite installer adds, removed on every box. One app ID per line.
+# Okular and Gwenview stay installed (hidden instead; see hidden-apps.txt).
+org.kde.kmines
+org.kde.kmahjongg
+org.kde.skanpage
+org.kde.qrca
+org.kde.kolourpaint
+org.kde.kcalc
+org.kde.krdc
+org.kde.elisa

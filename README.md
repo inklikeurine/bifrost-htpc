@@ -57,7 +57,7 @@ Before the reinstall, copy off anything worth keeping. At minimum, the 12 custom
   - After repo is stable, possibly have the box do a weekly check for updates to script, automated run.
 - **Maintenance:** Fedora builds and ships the OS. You only touch the repo when you change apps or settings.
 - **Hardware-specific settings stay out of the repo.** Screen resolution, hostname and Wi-Fi are set on each box, so the repo itself never differs between machines.
-  - The hostname can be set by the script with `--room` (see below). Wi-Fi and IP stay manual for now; they may suit machine-specific dotfiles better.
+  - The script can set the hostname (`--room`) and connect to Wi-Fi (`--wifi`, which asks for the network and password; nothing is stored in the repo). IP stays manual.
 
 ### Setting up a box
 
@@ -66,27 +66,31 @@ Before the reinstall, copy off anything worth keeping. At minimum, the 12 custom
 3. Run the script, naming the room for the hostname:
 
    ```bash
-   sudo ./setup.sh --room bedroom
+   sudo ./setup.sh --room bedroom --wifi
    ```
+
+   Leave out `--wifi` if the box is on Ethernet or already connected. The run ends by printing how to SSH in
+   (`ssh you@bifrost-bedroom.local`), the box's IPv4 addresses and its SSH host key fingerprints. Check
+   those fingerprints when you first connect.
 
 4. Reboot. The first run stages a new OS image with Bigscreen layered on, and autologin into Bigscreen starts working after this reboot.
 5. Run `sudo ./setup.sh` once more. It should report nothing to change.
 6. Work through the per-box checklist below.
 
-`--user NAME` picks the autologin account if you aren't running the script with `sudo` from it.
+`--user NAME` picks the autologin account if you aren't running the script with `sudo` from it. Every run is also added to `/var/log/bifrost-setup.log`, and `bifrost-status` sums up the box over SSH: OS deployments, layered packages, each timer's last result and next run, Moonfin and extension versions, and installed apps.
 
 ### What the script does
 
 | Step | Details |
 |---|---|
 | Layered packages | `rpm-ostree upgrade --install=…` for each package in `config/layered-packages.txt`, unless already requested. `upgrade --install` layers onto the newest Fedora image: Bigscreen in Fedora's updates repo (6.7.5) needs a newer Plasma than the 44.1.7 ISO ships (6.6.4), so layering onto the ISO's image would fail or pick an old Bigscreen snapshot. |
-| Flatpaks | Adds Flathub and installs `config/flatpaks.txt` system-wide. |
+| Flatpaks | Adds Flathub and installs `config/flatpaks.txt` system-wide. Removes the Fedora Flatpaks in `config/flatpaks-remove.txt` that the Kinoite installer adds. |
 | System files | Copies `files/usr/local/…` (helper scripts, Twitch and Dropout launchers, Firefox prefs) and `files/etc/systemd/system/…` (timers). Writes the autologin file for your account. |
-| Updates | Sets `AutomaticUpdatePolicy=stage` in `/etc/rpm-ostreed.conf` and turns on the timers below. Discover's own unattended updates also stay on. |
-| SSH | Adds `config/authorized_keys` to your `~/.ssh/authorized_keys` and turns on `sshd`. Password login goes off only once a key is in place. |
-| Firefox | Writes `/etc/firefox/policies/policies.json`, which force-installs Leanback for Dropout. |
+| Updates | Sets `AutomaticUpdatePolicy=stage` in `/etc/rpm-ostreed.conf` and turns on the timers below. Discover's background notifier is turned off, so the timers do all updating. |
+| SSH | Adds `config/authorized_keys` to your `~/.ssh/authorized_keys` and turns on `sshd`. Password login goes off only once a key is in place. Kinoite's firewall already allows SSH, and avahi makes `<hostname>.local` work on the LAN. Ends every run with the connection details and host key fingerprints. |
+| Firefox | Writes `/etc/firefox/policies/policies.json`, which force-installs Leanback for Dropout and uBlock Origin (against Twitch ads; AMO keeps it updated). |
 | Moonfin | Installs the latest release's `.flatpak` bundle. |
-| Per account | Copies `wallpapers/`, turns screen locking and auto-suspend on AC off, and writes the Bigscreen favorites (`~/.config/bigscreen-favs`) in the order of `config/favorites.txt`. Re-running the script resets the favorites to that list. |
+| Per account | Copies `wallpapers/`; turns off screen locking, auto-suspend on AC, Baloo file indexing, Discover's notifier and the Welcome Center pop-up; hides the apps in `config/hidden-apps.txt` from Bigscreen; writes the Bigscreen favorites (`~/.config/bigscreen-favs`) in the order of `config/favorites.txt`. Re-running the script resets the hidden apps and favorites to those lists. |
 
 ### Timers
 
@@ -101,7 +105,16 @@ Before the reinstall, copy off anything worth keeping. At minimum, the 12 custom
 ### Repo layout
 
 - `setup.sh`: the setup script.
-- `config/`: the lists to edit: `flatpaks.txt`, `layered-packages.txt`, `favorites.txt`, `authorized_keys`.
+- `config/`: the lists to edit: `flatpaks.txt`, `flatpaks-remove.txt`, `layered-packages.txt`, `favorites.txt`, `hidden-apps.txt`, `authorized_keys`.
+
+### Hidden apps
+
+Stock Kinoite shows about 30 desktop apps in Bigscreen. `config/hidden-apps.txt` hides all of them except
+System Settings, Konsole and Discover. Okular and Gwenview stay installed but hidden. The script writes the list
+to `~/.config/applications-blacklistrc`, which Bigscreen reads to filter its app list. That copy overrides the
+one Bigscreen rewrites in `~/.config/plasma-bigscreen/` at each login, so the script repeats Bigscreen's own
+default entries too. Hidden apps still run from SSH or System Settings. To show one again, delete its line and
+re-run the script.
 - `files/`: files copied onto the box at the same path.
 - `wallpapers/`: copied to `~/.local/share/wallpapers/` for every account.
 - `tests/`: the container test (see Testing).
@@ -171,12 +184,15 @@ These are the only things that differ between machines. They're done once on eac
 
 These need real hardware; the container test can't cover them.
 
-- **Notifications:** Bigscreen doesn't provide a notification service, so any app that shows a notification (Discover's update messages, for example) waits about 25 s for an answer that never comes. It may not be noticeable. If it is, the fix is a user-level dunst setup, which means one more layered package.
+- **Notifications:** Bigscreen doesn't provide a notification service, so any app that shows a notification waits about 25 s for an answer that never comes. The script turns off Discover's notifier, the main source. If others turn out to be noticeable, the fix is a user-level dunst setup, which means one more layered package.
 - **Closing the web apps with the remote:** kiosk mode has no close button. Try the remote's back and home keys, and Alt+F4 from a keyboard.
 - **First boot into Bigscreen:** autologin, the favorites row and the wallpapers picker.
 - **KWallet prompt:** that a blank-password wallet really means no prompt after a reboot.
 - **Hardware video decode** in Firefox and Moonlight (Intel VA-API; `libva-intel-media-driver` ships with Kinoite).
 - **The weekly reboot** comes back into Bigscreen on its own, with the staged update applied.
+- **Hidden apps and Welcome Center:** the home screen shows only the favorites plus System Settings, Konsole and Discover, and Welcome Center doesn't appear.
+- **`--wifi`** connects, and the connection comes back after a reboot.
+- **uBlock Origin** doesn't break Twitch playback.
 
 ## Testing
 

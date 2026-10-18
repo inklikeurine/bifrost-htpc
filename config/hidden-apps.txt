@@ -1,0 +1,27 @@
+# Apps hidden from the Bigscreen home screen. One desktop ID per line, without ".desktop".
+# They stay installed and still run from SSH or System Settings.
+# setup.sh also keeps Bigscreen's own built-in entries hidden.
+# Kept visible on purpose: System Settings, Konsole, Discover.
+org.kde.partitionmanager
+firewall-config
+org.kde.krfb
+org.kde.kdebugsettings
+org.kde.kmenuedit
+org.kde.kjournaldbrowser
+org.kde.plasma.emojier
+org.kde.kcharselect
+org.kde.plasma-welcome
+org.kde.khelpcenter
+org.kde.kwalletmanager
+org.kde.kfind
+org.kde.filelight
+org.kde.ark
+org.kde.kwrite
+org.kde.spectacle
+org.kde.plasma.bigscreen.uvcviewer
+org.kde.okular
+org.kde.kinfocenter
+org.kde.dolphin
+org.kde.gwenview
+org.kde.plasma-systemmonitor
+org.mozilla.firefox

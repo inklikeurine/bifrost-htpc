@@ -1,0 +1,33 @@
+#!/usr/bin/bash
+# Show what this box is running and how its updates are doing. Handy over SSH.
+set -uo pipefail
+
+section() { printf '\n== %s\n' "$*"; }
+
+section "OS"
+if [[ -e /run/ostree-booted ]]; then
+    rpm-ostree status --json | jq -r '
+        .deployments[] |
+        "\(if .booted then "booted " elif .staged then "staged " else "       " end) \(.version // "?")  layered: \((.["requested-packages"] // []) | join(" ") | if . == "" then "none" else . end)"'
+else
+    echo "not a booted Kinoite system"
+fi
+
+section "Timers"
+for t in rpm-ostreed-automatic bifrost-flatpak-update bifrost-update-moonfin bifrost-update-dropout bifrost-weekly-reboot; do
+    next=$(systemctl show -p NextElapseUSecRealtime --value "$t.timer" 2>/dev/null)
+    result=$(systemctl show -p Result --value "$t.service" 2>/dev/null)
+    last=$(systemctl show -p ExecMainExitTimestamp --value "$t.service" 2>/dev/null)
+    [[ -z $last ]] && result="-"
+    printf '%-24s enabled: %-8s last run: %-28s result: %-8s next: %s\n' "$t" \
+        "$(systemctl is-enabled "$t.timer" 2>/dev/null)" "${last:-never}" "${result:-?}" "${next:-?}"
+done
+
+section "Apps"
+echo "Moonfin release: $(cat /var/lib/bifrost/moonfin-release 2>/dev/null || echo 'not installed')"
+jq -r '.policies.ExtensionSettings | to_entries[] | "\(.key): \(.value.install_url)"' \
+    /etc/firefox/policies/policies.json 2>/dev/null || echo "no Firefox policy"
+flatpak list --system --app --columns=application,version
+
+section "Last setup run"
+grep '^=====' /var/log/bifrost-setup.log 2>/dev/null | tail -n1 || echo "none logged"
