@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Twitch
+Comment=twitch.tv in full-screen Firefox
+Exec=/usr/local/bin/bifrost-webapp twitch https://www.twitch.tv
+Icon=firefox
+Categories=AudioVideo;Video;
+StartupNotify=true

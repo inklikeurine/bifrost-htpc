@@ -1,0 +1,8 @@
+[Unit]
+Description=Point Firefox at the latest Leanback for Dropout release (bifrost-htpc)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/bifrost-update-dropout

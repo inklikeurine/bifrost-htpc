@@ -1,0 +1,74 @@
+#!/usr/bin/bash
+# Run setup.sh in a throwaway Kinoite distrobox, twice, and check the result.
+#
+# Usage: tests/run-distrobox-test.sh [IMAGE]
+#   IMAGE defaults to the newest localhost/bifrost-test-kinoite image
+#   (build one with tests/build-test-image.sh).
+#
+# The box gets its own home directory, so nothing touches your real ~/.config.
+# Skipped in a container: rpm-ostree layering, the hostname, and starting sshd (the
+# box shares the host's network, where port 22 is usually taken).
+set -euo pipefail
+
+repo=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+image=${1:-$(podman images --format '{{.Repository}}:{{.Tag}}' localhost/bifrost-test-kinoite | sort -V | tail -n1)}
+[[ -n $image ]] || { echo "No test image; run tests/build-test-image.sh first." >&2; exit 1; }
+box=bifrost-test
+test_home=${XDG_CACHE_HOME:-$HOME/.cache}/bifrost-test/home
+logs=$(dirname "$test_home")
+
+echo "==> Creating $box from $image (home: $test_home)"
+distrobox rm -f "$box" >/dev/null 2>&1 || true
+rm -rf "$test_home"
+mkdir -p "$test_home"
+# An explicit pids limit: podman 4.9 turns distrobox's --pids-limit=-1 into a limit of 1.
+distrobox create --yes --name "$box" --image "$image" --home "$test_home" --init \
+    --additional-flags "--pids-limit=16384" >/dev/null
+in_box() { distrobox enter "$box" -- "$@"; }
+# distrobox mounts the host's / at /run/host.
+setup=/run/host$repo/setup.sh
+
+echo "==> First run"
+in_box sudo "$setup" >"$logs/run1.log" 2>&1 || { tail -20 "$logs/run1.log"; exit 1; }
+echo "==> Second run (should change nothing)"
+in_box sudo "$setup" >"$logs/run2.log" 2>&1 || { tail -20 "$logs/run2.log"; exit 1; }
+
+fail=0
+check() {
+    local what=$1
+    shift
+    if "$@" >/dev/null 2>&1; then echo "  ok    $what"; else echo "  FAIL  $what"; fail=1; fi
+}
+
+echo "==> Checks"
+check "second run changed nothing" bash -c "! grep -qE '^ +(updated|enabled|added)|Installing' '$logs/run2.log'"
+check "second run had no warnings" bash -c "! grep -q WARNING '$logs/run2.log'"
+for app in rocks.shy.VacuumTube com.moonlight_stream.Moonlight com.valvesoftware.SteamLink org.moonfin.linux; do
+    check "flatpak $app installed" in_box flatpak info --system "$app"
+done
+check "autologin into Bigscreen" in_box grep -qx 'Session=plasma-bigscreen-wayland.desktop' /etc/plasmalogin.conf.d/50-bifrost-autologin.conf
+check "rpm-ostree stages updates" in_box grep -qx 'AutomaticUpdatePolicy=stage' /etc/rpm-ostreed.conf
+for timer in bifrost-flatpak-update bifrost-update-moonfin bifrost-update-dropout bifrost-weekly-reboot rpm-ostreed-automatic; do
+    check "$timer.timer enabled" in_box systemctl is-enabled "$timer.timer"
+done
+check "sshd password login off" in_box bash -c "sudo sshd -T | grep -qx 'passwordauthentication no'"
+check "policies.json force-installs the extension" in_box jq -e \
+    '.policies.ExtensionSettings["leanback-for-dropout@inklikeurine.dev"].installation_mode == "force_installed"' \
+    /etc/firefox/policies/policies.json
+check "screen lock off" grep -qx 'Autolock=false' "$test_home/.config/kscreenlockerrc"
+check "Bigscreen favorites written" grep -q '^storageId=bifrost-twitch.desktop$' "$test_home/.config/bigscreen-favs"
+check "update services run under systemd" in_box bash -c \
+    'for s in bifrost-update-dropout bifrost-update-moonfin; do sudo systemctl start $s.service || exit 1; done'
+
+echo "==> Launching the Dropout web app headless (45 s)"
+in_box bash -c 'MOZ_HEADLESS=1 timeout 45 /usr/local/bin/bifrost-webapp dropout https://watch.dropout.tv' >/dev/null 2>&1 || true
+check "Leanback for Dropout installed and active in the web-app profile" jq -e \
+    '[.addons[] | select(.id == "leanback-for-dropout@inklikeurine.dev" and .active)] | length == 1' \
+    "$test_home/.local/share/bifrost/firefox/dropout/extensions.json"
+
+echo
+if ((fail)); then
+    echo "Some checks failed. Logs: $logs/run1.log, $logs/run2.log"
+    exit 1
+fi
+echo "All checks passed. Remove the box with: distrobox rm -f $box"

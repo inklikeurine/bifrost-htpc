@@ -1,0 +1,14 @@
+#!/usr/bin/bash
+# Open a site in Firefox kiosk mode with its own profile.
+# Usage: bifrost-webapp <name> <url>
+set -euo pipefail
+
+name=${1:?usage: bifrost-webapp <name> <url>}
+url=${2:?usage: bifrost-webapp <name> <url>}
+
+profile="${XDG_DATA_HOME:-$HOME/.local/share}/bifrost/firefox/$name"
+mkdir -p "$profile"
+# Refresh the prefs on every launch so a repo change reaches existing profiles.
+cp /usr/local/share/bifrost/firefox-user.js "$profile/user.js"
+
+exec /usr/bin/firefox --kiosk --no-remote --profile "$profile" "$url"

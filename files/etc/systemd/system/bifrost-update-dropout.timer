@@ -1,0 +1,10 @@
+[Unit]
+Description=Weekly Leanback for Dropout update check (bifrost-htpc)
+
+[Timer]
+OnCalendar=Sun *-*-* 03:30
+RandomizedDelaySec=10min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

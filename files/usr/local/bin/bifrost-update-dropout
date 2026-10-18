@@ -1,0 +1,44 @@
+#!/usr/bin/bash
+# Point Firefox's policies.json at the newest Leanback for Dropout release.
+#
+# The extension is force-installed by policy. latest_url always redirects to the
+# newest signed release; this script writes that release's own (versioned) URL into
+# the policy, so the URL changes with each release and Firefox installs the new
+# version on its next start.
+set -euo pipefail
+
+latest_url=https://github.com/inklikeurine/firefox-leanback-for-dropout/releases/latest/download/leanback-for-dropout.xpi
+ext_id=leanback-for-dropout@inklikeurine.dev
+template=/usr/local/share/bifrost/firefox-policies.json
+policy=/etc/firefox/policies/policies.json
+
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+
+read -r status url < <(curl -sS --retry 3 -o /dev/null -w '%{http_code} %{redirect_url}\n' -I "$latest_url") || true
+if [[ $status == 302 && $url == https://github.com/*/releases/download/*/leanback-for-dropout.xpi ]]; then
+    :
+elif [[ $status == 404 ]]; then
+    echo "No release of Leanback for Dropout yet."
+    url=""
+else
+    echo "Couldn't resolve $latest_url (HTTP ${status:-none}); leaving $policy alone." >&2
+    exit 1
+fi
+
+if [[ -z $url && -f $policy ]]; then
+    # Keep whatever release was installed before rather than dropping the extension.
+    url=$(jq -r --arg id "$ext_id" '.policies.ExtensionSettings[$id].install_url // empty' "$policy")
+fi
+
+jq --arg id "$ext_id" --arg url "$url" '
+    if $url != "" then
+        .policies.ExtensionSettings[$id] = {installation_mode: "force_installed", install_url: $url}
+    else . end' "$template" >"$tmp/policies.json"
+
+if cmp -s "$tmp/policies.json" "$policy"; then
+    echo "policies.json is current${url:+ ($url)}."
+else
+    install -D -m 0644 "$tmp/policies.json" "$policy"
+    echo "Wrote $policy${url:+ with $url}."
+fi

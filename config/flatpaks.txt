@@ -1,0 +1,5 @@
+# Flathub apps installed system-wide on every box. One app ID per line.
+# Moonfin isn't on Flathub; bifrost-update-moonfin installs it from GitHub.
+rocks.shy.VacuumTube
+com.moonlight_stream.Moonlight
+com.valvesoftware.SteamLink

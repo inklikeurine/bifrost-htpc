@@ -1,0 +1,9 @@
+[Unit]
+Description=Weekly reboot, Sunday 04:30 (bifrost-htpc)
+
+[Timer]
+# Not Persistent: a box that was off at 04:30 shouldn't reboot as soon as it's turned on.
+OnCalendar=Sun *-*-* 04:30
+
+[Install]
+WantedBy=timers.target

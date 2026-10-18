@@ -1,0 +1,6 @@
+[Unit]
+Description=Weekly reboot to apply staged OS updates (bifrost-htpc)
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/systemctl reboot

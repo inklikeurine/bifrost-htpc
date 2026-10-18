@@ -1,0 +1,8 @@
+# Bigscreen home-screen favorites, in order. One desktop file ID per line.
+# setup.sh rewrites ~/.config/bigscreen-favs from this list on every run.
+rocks.shy.VacuumTube.desktop
+org.moonfin.linux.desktop
+bifrost-twitch.desktop
+bifrost-dropout.desktop
+com.moonlight_stream.Moonlight.desktop
+com.valvesoftware.SteamLink.desktop

@@ -53,15 +53,62 @@ Before the reinstall, copy off anything worth keeping. At minimum, the 12 custom
 
 - **What the repo holds:** the setup script, the Flatpak list, Firefox `policies.json`, launchers for Twitch and Dropout, a `wallpapers/` folder, the autologin setting, and user config (screen-lock off, Bigscreen favorites, any notification fix that turns out to be needed).
 - **New box:** install Kinoite, clone the repo, run the script, reboot.
-- **Making changes:** write the script so running it again is harmless. Changing a setting then means editing the repo and re-running the script on each box.
+- **Making changes:** running the script again is harmless. Changing a setting means editing the repo and re-running the script on each box.
   - After repo is stable, possibly have the box do a weekly check for updates to script, automated run.
 - **Maintenance:** Fedora builds and ships the OS. You only touch the repo when you change apps or settings.
 - **Hardware-specific settings stay out of the repo.** Screen resolution, hostname and Wi-Fi are set on each box, so the repo itself never differs between machines.
-  - May want to set hostname / IP / wif-fi connection via this script, so box is already setup. This may be better suited to machine-specific dotfiles.
+  - The hostname can be set by the script with `--room` (see below). Wi-Fi and IP stay manual for now; they may suit machine-specific dotfiles better.
+
+### Setting up a box
+
+1. Install Kinoite from the ISO. Create your account as an administrator.
+2. Get the repo onto the box. It's private, so `git clone` needs credentials (for example a read-only deploy key); copying it over with `scp` also works.
+3. Run the script, naming the room for the hostname:
+
+   ```bash
+   sudo ./setup.sh --room bedroom
+   ```
+
+4. Reboot. The first run stages a new OS image with Bigscreen layered on, and autologin into Bigscreen starts working after this reboot.
+5. Run `sudo ./setup.sh` once more. It should report nothing to change.
+6. Work through the per-box checklist below.
+
+`--user NAME` picks the autologin account if you aren't running the script with `sudo` from it.
+
+### What the script does
+
+| Step | Details |
+|---|---|
+| Layered packages | `rpm-ostree upgrade --install=…` for each package in `config/layered-packages.txt`, unless already requested. `upgrade --install` layers onto the newest Fedora image: Bigscreen in Fedora's updates repo (6.7.5) needs a newer Plasma than the 44.1.7 ISO ships (6.6.4), so layering onto the ISO's image would fail or pick an old Bigscreen snapshot. |
+| Flatpaks | Adds Flathub and installs `config/flatpaks.txt` system-wide. |
+| System files | Copies `files/usr/local/…` (helper scripts, Twitch and Dropout launchers, Firefox prefs) and `files/etc/systemd/system/…` (timers). Writes the autologin file for your account. |
+| Updates | Sets `AutomaticUpdatePolicy=stage` in `/etc/rpm-ostreed.conf` and turns on the timers below. Discover's own unattended updates also stay on. |
+| SSH | Adds `config/authorized_keys` to your `~/.ssh/authorized_keys` and turns on `sshd`. Password login goes off only once a key is in place. |
+| Firefox | Writes `/etc/firefox/policies/policies.json`, which force-installs Leanback for Dropout. |
+| Moonfin | Installs the latest release's `.flatpak` bundle. |
+| Per account | Copies `wallpapers/`, turns screen locking and auto-suspend on AC off, and writes the Bigscreen favorites (`~/.config/bigscreen-favs`) in the order of `config/favorites.txt`. Re-running the script resets the favorites to that list. |
+
+### Timers
+
+| Timer | When | What |
+|---|---|---|
+| `rpm-ostreed-automatic.timer` | daily | Downloads and stages OS updates. |
+| `bifrost-flatpak-update.timer` | daily, 03:00 | `flatpak update`, then removes unused runtimes. |
+| `bifrost-update-moonfin.timer` | Sunday, 03:30 | Installs a newer Moonfin release if there is one. |
+| `bifrost-update-dropout.timer` | Sunday, 03:30 | Points `policies.json` at the newest Leanback for Dropout release. |
+| `bifrost-weekly-reboot.timer` | Sunday, 04:30 | Reboots, which applies the staged OS update. |
+
+### Repo layout
+
+- `setup.sh`: the setup script.
+- `config/`: the lists to edit: `flatpaks.txt`, `layered-packages.txt`, `favorites.txt`, `authorized_keys`.
+- `files/`: files copied onto the box at the same path.
+- `wallpapers/`: copied to `~/.local/share/wallpapers/` for every account.
+- `tests/`: the container test (see Testing).
 
 ## Login
 
-- **Autologin straight into the Bigscreen session.** Kinoite uses Plasma Login Manager, not SDDM. Autologin is set on its System Settings page ("Login Screen") or in the `[Autologin]` section (`User=`, `Session=`) of a file in `/etc/plasmalogin.conf.d/`. The script writes that file. Confirm the exact Bigscreen session name on the first install.
+- **Autologin straight into the Bigscreen session.** Kinoite uses Plasma Login Manager, not SDDM. Autologin is set on its System Settings page ("Login Screen") or in the `[Autologin]` section (`User=`, `Session=`) of a file in `/etc/plasmalogin.conf.d/`. The script writes that file. The session is `plasma-bigscreen-wayland.desktop` (from the `plasma-bigscreen-wayland` package). `Relogin=true` logs straight back in if the session exits or crashes.
 
 ## App plan
 
@@ -74,7 +121,7 @@ Before the reinstall, copy off anything worth keeping. At minimum, the 12 custom
 | Twitch | twitch.tv in Firefox, full screen | potentially develop a simple Leanback UI. |
 | Dropout | dropout.tv in Firefox, full screen, with your extension | The extension supplies the 10-foot UI. |
 
-**The "web apps":** each one is a launcher file that opens Firefox in kiosk mode (full screen, no toolbars) with its own profile, for example `firefox --kiosk --no-remote -P twitch https://www.twitch.tv`. The setup script creates the profiles and launchers, and both show up as normal tiles in Bigscreen. **Test how to close them with the remote,** since kiosk mode has no close button.
+**The "web apps":** each one is a launcher file that opens Firefox in kiosk mode (full screen, no toolbars) with its own profile: `bifrost-webapp twitch https://www.twitch.tv` runs `firefox --kiosk --no-remote --profile ~/.local/share/bifrost/firefox/twitch https://www.twitch.tv`. The profile is created on first launch, and `files/usr/local/share/bifrost/firefox-user.js` is copied into it on every launch (no first-run pages, no restore-session prompt after the weekly reboot, autoplay allowed). Both launchers show up as normal tiles in Bigscreen. Kinoite's Firefox plays H.264, VP9 and AV1 out of the box, so Twitch needs no extra codec packages. **Test how to close them with the remote,** since kiosk mode has no close button.
 
 ### Moonfin: Flatpak bundle
 
@@ -90,7 +137,8 @@ Before the reinstall, copy off anything worth keeping. At minimum, the 12 custom
 
 - **Custom Plugin:** The dropout.tv leanback extension for firefox is located at https://github.com/inklikeurine/firefox-leanback-for-dropout
 - **How to sign:** sign it on addons.mozilla.org as "self-distributed" (unlisted, so it isn't public). This can run automatically in GitHub Actions on each release with `web-ext sign --channel unlisted`.
-- **Where the policy file goes:** `/etc/firefox/policies/policies.json`. This is for the Firefox that comes preinstalled on Kinoite (`/etc` is writable on Kinoite). If you switch to the Flathub Firefox, the path is different, so recheck it.
+- **How it updates:** `releases/latest/download/leanback-for-dropout.xpi` always points to the newest signed release. `bifrost-update-dropout` follows that link to the release's own versioned URL and writes that into `policies.json`. The URL changes with each release, so Firefox installs the new version on its next start.
+- **Where the policy file goes:** `/etc/firefox/policies/policies.json`. Tested: Kinoite's Firefox reads it, and the extension installs signed and active. This is for the Firefox that comes preinstalled on Kinoite (`/etc` is writable on Kinoite). If you switch to the Flathub Firefox, the path is different, so recheck it.
 
 ## Per-box checklist
 
@@ -101,7 +149,7 @@ These are the only things that differ between machines. They're done once on eac
 - **Network:** Ethernet if a cable can reach (better for Moonlight). Otherwise Wi-Fi.
   - All PC's expected to connect to the same wi-fi network.
 - **BIOS power setting:** set AC Recovery (or similar) to Power On, so the box comes back by itself after an outage.
-- **Moonfin:** sign in and turn on TV mode.
+- **Moonfin:** sign in and turn on TV mode. The first time Moonfin saves the login, KWallet asks to create a wallet: pick the classic (Blowfish) wallet and leave the password blank, so autologin never triggers a password prompt.
 - **TV:** LAN access only. Block its internet access at the router.
 
 ## Same on every box (in the script)
@@ -114,13 +162,37 @@ These are the only things that differ between machines. They're done once on eac
 - **Wallpapers:** the script copies the repo's `wallpapers/` folder into `~/.local/share/wallpapers/` for every account, and Bigscreen's wallpaper picker lists them. To add a wallpaper to every box, add it to the repo and re-run the script. The stock wallpapers stay in the picker too: it always includes the system wallpaper folder and can't be pointed somewhere else, and Kinoite's system folders are read-only.
 - **Screen locking:** off.
 - **No global key remapping:** a remap changes the key for every app, so fixing one app can break another.
-- **KWallet:** Moonfin stores its server login in KWallet. Give the wallet a blank password so autologin doesn't trigger a password prompt when Moonfin opens.
+- **KWallet:** Moonfin stores its server login in KWallet. Give the wallet a blank password so autologin doesn't trigger a password prompt when Moonfin opens. The script can't create the wallet, so this is a per-box step.
+- **No auto-suspend on AC:** a sleeping box misses its update timers and may not wake for the remote.
 - **Moonfin update check:** every Sunday.
 - **Dropout extension update check:** every Sunday.
 
 ## Things to verify
 
+These need real hardware; the container test can't cover them.
+
 - **Notifications:** Bigscreen doesn't provide a notification service, so any app that shows a notification (Discover's update messages, for example) waits about 25 s for an answer that never comes. It may not be noticeable. If it is, the fix is a user-level dunst setup, which means one more layered package.
+- **Closing the web apps with the remote:** kiosk mode has no close button. Try the remote's back and home keys, and Alt+F4 from a keyboard.
+- **First boot into Bigscreen:** autologin, the favorites row and the wallpapers picker.
+- **KWallet prompt:** that a blank-password wallet really means no prompt after a reboot.
+- **Hardware video decode** in Firefox and Moonlight (Intel VA-API; `libva-intel-media-driver` ships with Kinoite).
+- **The weekly reboot** comes back into Bigscreen on its own, with the staged update applied.
+
+## Testing
+
+`tests/` runs `setup.sh` in a throwaway Kinoite container built from the ISO:
+
+```bash
+tests/build-test-image.sh ../Fedora-Kinoite-ostree-x86_64-44-1.7.iso
+```
+
+```bash
+tests/run-distrobox-test.sh
+```
+
+The first command turns the ISO's OS tree into a podman image. The second creates a distrobox with its own home directory (your real `~/.config` is never touched), runs the script twice, checks the second run changes nothing, and checks the results. That includes launching the Dropout web app in headless Firefox and confirming the extension installs.
+
+A container can't test rpm-ostree layering, the hostname, starting `sshd` (the box shares the host's network), or anything that needs a screen. Last run with Kinoite 44.1.7 on 2026-10-18: all checks passed.
 
 ## Sources
 

@@ -1,0 +1,3 @@
+# RPMs layered onto Kinoite with rpm-ostree. Keep this list as short as possible:
+# a layered package can hold up an OS update when Fedora's repos are out of step.
+plasma-bigscreen-wayland

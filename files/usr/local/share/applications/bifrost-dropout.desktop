@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Dropout
+Comment=dropout.tv in full-screen Firefox with Leanback for Dropout
+Exec=/usr/local/bin/bifrost-webapp dropout https://watch.dropout.tv
+Icon=firefox
+Categories=AudioVideo;Video;
+StartupNotify=true

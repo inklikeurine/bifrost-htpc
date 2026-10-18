@@ -1,0 +1,37 @@
+#!/usr/bin/bash
+# Install Moonfin from its latest GitHub release, or update it if a newer one is out.
+# Moonfin's .flatpak bundle has no update source, so Flatpak can't update it itself.
+set -euo pipefail
+
+app_id=org.moonfin.linux
+repo=Moonfin-Client/Moonfin-Core
+state=/var/lib/bifrost/moonfin-release
+
+release=$(curl -fsSL --retry 3 "https://api.github.com/repos/$repo/releases/latest")
+tag=$(jq -r .tag_name <<<"$release")
+url=$(jq -r '.assets[] | select(.name | test("^Moonfin_Linux_v.*\\.flatpak$")) | .browser_download_url' <<<"$release" | head -n1)
+if [[ -z $url ]]; then
+    echo "Moonfin $tag has no x86_64 .flatpak asset; leaving the installed version alone." >&2
+    exit 1
+fi
+
+if flatpak info --system "$app_id" >/dev/null 2>&1 && [[ $(cat "$state" 2>/dev/null) == "$tag" ]]; then
+    echo "Moonfin $tag is already installed."
+    exit 0
+fi
+
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+echo "Installing Moonfin $tag from $url"
+curl -fsSL --retry 3 -o "$tmp/moonfin.flatpak" "$url"
+# --reinstall replaces the old version in place. App data in ~/.var/app (settings,
+# server login) isn't touched.
+install_bundle() { flatpak install --system --noninteractive -y --reinstall --bundle "$tmp/moonfin.flatpak"; }
+# Pulling the runtime from Flathub in the same step has failed once with "Data is
+# corrupt" and then worked on the next try, so try twice.
+install_bundle || { echo "Retrying in 30 s..."; sleep 30; install_bundle; }
+flatpak info --system "$app_id" >/dev/null
+
+mkdir -p "$(dirname "$state")"
+echo "$tag" >"$state"
+echo "Moonfin $tag installed."
