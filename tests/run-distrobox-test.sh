@@ -19,6 +19,8 @@ logs=$(dirname "$test_home")
 
 echo "==> Creating $box from $image (home: $test_home)"
 distrobox rm -f "$box" >/dev/null 2>&1 || true
+# An interrupted earlier run can leave a container distrobox won't remove.
+podman rm -f "$box" >/dev/null 2>&1 || true
 rm -rf "$test_home"
 mkdir -p "$test_home"
 # An explicit pids limit: podman 4.9 turns distrobox's --pids-limit=-1 into a limit of 1.

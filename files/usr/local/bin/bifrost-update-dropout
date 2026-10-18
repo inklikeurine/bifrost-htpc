@@ -5,6 +5,7 @@
 # newest signed release; this script writes that release's own (versioned) URL into
 # the policy, so the URL changes with each release and Firefox installs the new
 # version on its next start.
+# The rest of the policy (uBlock Origin, first-run pages) comes from the template.
 set -euo pipefail
 
 latest_url=https://github.com/inklikeurine/firefox-leanback-for-dropout/releases/latest/download/leanback-for-dropout.xpi

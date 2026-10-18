@@ -244,7 +244,7 @@ if ! systemctl is-enabled --quiet sshd.service 2>/dev/null; then
 fi
 
 # ---------------------------------------------------------------------------
-log "Firefox policy (Leanback for Dropout)"
+log "Firefox policy"
 /usr/local/bin/bifrost-update-dropout || warn "couldn't check for a new extension release; will retry on Sunday"
 
 log "Moonfin"
