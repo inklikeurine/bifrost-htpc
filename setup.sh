@@ -452,6 +452,32 @@ for account in "${accounts[@]}"; do
     fi
     note "Welcome Center, file indexing and Discover's notifier off"
 
+    # Moonfin has no full-screen setting: it reopens the way it was last closed, which
+    # starts as a 1280x720 window. A KWin rule forces its window full screen instead,
+    # so a stray F11 or double-click can't leave it windowed either. Our rule is added
+    # to any others in kwinrulesrc.
+    rule=bifrost-moonfin
+    kwin_rule() { as_user kwriteconfig6 --file kwinrulesrc --group "$rule" "$@"; }
+    kwin_rule --key Description "Moonfin full screen (bifrost-htpc)"
+    kwin_rule --key wmclass org.moonfin.linux
+    kwin_rule --key wmclassmatch 1 # exact match on the Wayland app ID
+    kwin_rule --key fullscreen true
+    kwin_rule --key fullscreenrule 2 # force
+    rules=$(as_user kreadconfig6 --file kwinrulesrc --group General --key rules)
+    if [[ ,$rules, != *,$rule,* ]]; then
+        rules=${rules:+$rules,}$rule
+        as_user kwriteconfig6 --file kwinrulesrc --group General --key rules "$rules"
+    fi
+    as_user kwriteconfig6 --file kwinrulesrc --group General --key count "$(tr , '\n' <<<"$rules" | grep -c .)"
+    # KWin reads its rules at login; if this account's session is running, reload them now.
+    uid=$(id -u "$account")
+    if [[ -S /run/user/$uid/bus ]]; then
+        as_user env DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$uid/bus" \
+            dbus-send --session --type=method_call --dest=org.kde.KWin /KWin org.kde.KWin.reconfigure \
+            >/dev/null 2>&1 || true
+    fi
+    note "Moonfin opens full screen"
+
     # Bigscreen favorites, in the order of config/favorites.txt.
     as_user mkdir -p "$acct_home/.config"
     write_favorites "$tmp" "$acct_home"

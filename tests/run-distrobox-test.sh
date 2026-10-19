@@ -84,6 +84,10 @@ check "bifrost-status runs" in_box /usr/local/bin/bifrost-status
 check "policies.json force-installs uBlock Origin" in_box jq -e \
     '.policies.ExtensionSettings["uBlock0@raymondhill.net"].installation_mode == "force_installed"' \
     /etc/firefox/policies/policies.json
+check "KWin rule forces Moonfin full screen" bash -c "
+    f='$test_home/.config/kwinrulesrc'
+    grep -qx 'rules=bifrost-moonfin' \"\$f\" && grep -qx 'count=1' \"\$f\" &&
+        sed -n '/^\[bifrost-moonfin\]/,/^\[/p' \"\$f\" | grep -qx 'fullscreenrule=2'"
 check "Bigscreen favorites written" grep -q '^storageId=bifrost-twitch.desktop$' "$test_home/.config/bigscreen-favs"
 check "web-app icons installed" in_box test -f /usr/local/share/icons/hicolor/scalable/apps/bifrost-twitch.svg \
     -a -f /usr/local/share/icons/hicolor/512x512/apps/bifrost-dropout.png
