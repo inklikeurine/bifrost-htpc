@@ -89,6 +89,20 @@ internet connection the script stops before changing anything. `/var/log/bifrost
 runs: each run's exit code plus any warnings and errors. Over SSH, `bifrost-status` shows the OS deployments and layered
 packages, each timer's last result and next run, the Moonfin and extension versions, and the installed apps.
 
+### Updating a box
+
+The repo is already cloned on the box, so pull the changes into it rather than cloning again
+(`git clone` refuses a folder that isn't empty). Over SSH:
+
+```bash
+cd ~/bifrost-htpc
+git pull
+sudo ./setup.sh
+```
+
+You don't need `--room` or `--wifi` again: without `--room` the hostname stays as it is, and the Wi-Fi
+connection is saved. If the run ends by asking for a reboot, reboot.
+
 ### What the script does
 
 | Step | Details |
