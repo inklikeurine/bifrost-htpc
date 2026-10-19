@@ -60,8 +60,12 @@ Before the reinstall, copy off anything worth keeping. At minimum, the 12 custom
 ### Setting up a box
 
 1. Install Kinoite from the ISO. Create your account as an administrator.
-2. Get the repo onto the box. It's private, so `git clone` needs credentials (for example a read-only deploy key);
-   copying it over with `scp` also works.
+2. Get the repo onto the box:
+
+   ```bash
+   git clone https://github.com/inklikeurine/bifrost-htpc.git && cd bifrost-htpc
+   ```
+
 3. Run the script:
 
    ```bash
