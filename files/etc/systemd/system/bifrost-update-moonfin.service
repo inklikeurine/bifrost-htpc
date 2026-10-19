@@ -5,4 +5,6 @@ After=network-online.target
 
 [Service]
 Type=oneshot
+# Stops flatpak noting that its exports directory is not in the search path.
+Environment=XDG_DATA_DIRS=/var/lib/flatpak/exports/share:/usr/local/share:/usr/share
 ExecStart=/usr/local/bin/bifrost-update-moonfin

@@ -50,6 +50,9 @@ error() { printf 'ERROR: %s\n' "$*" >&2; record "ERROR: $*"; }
 # redirected, they get quiet options instead.
 flatpak_opts=(--system -y)
 [[ -t 1 ]] || flatpak_opts+=(--noninteractive)
+# sudo drops the session's XDG_DATA_DIRS. Without Flatpak's exports in it, flatpak prints
+# a note that apps may not be found; the Bigscreen session sets it, so they are.
+export XDG_DATA_DIRS=/var/lib/flatpak/exports/share:${XDG_DATA_DIRS:-/usr/local/share:/usr/share}
 
 # Lines of a config list, without comments or blank lines.
 read_list() { sed -e 's/#.*//' -e 's/[[:space:]]*$//' -e '/^$/d' "$1"; }
