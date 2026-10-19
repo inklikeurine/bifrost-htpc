@@ -38,7 +38,8 @@ in_box sudo flatpak install --system --noninteractive -y flathub org.kde.kmines 
 
 echo "==> First run"
 in_box sudo "$setup" >"$logs/run1.log" 2>&1 || { tail -20 "$logs/run1.log"; exit 1; }
-echo "==> Second run (should change nothing)"
+echo "==> Second run (should change nothing), with the log seeded with 10 old runs"
+in_box sudo bash -c 'for i in $(seq 10); do printf "===== old run %s: exit 0\n" "$i"; done >>/var/log/bifrost-setup.log'
 in_box sudo "$setup" >"$logs/run2.log" 2>&1 || { tail -20 "$logs/run2.log"; exit 1; }
 
 fail=0
@@ -75,7 +76,10 @@ check "Welcome Center pop-up off" grep -qx 'ShowUpdatePage=false' "$test_home/.c
 check "Baloo indexing off" grep -qx 'Indexing-Enabled=false' "$test_home/.config/baloofilerc"
 check "Discover notifier off" grep -qx 'Hidden=true' "$test_home/.config/autostart/org.kde.discover.notifier.desktop"
 check "SSH summary with host key fingerprints" grep -q 'SHA256:' "$logs/run1.log"
-check "run logged to /var/log/bifrost-setup.log" in_box grep -q '^===== ' /var/log/bifrost-setup.log
+check "setup log ends with this run's exit code" in_box bash -c \
+    "grep '^===== ' /var/log/bifrost-setup.log | tail -n1 | grep -q 'setup.sh: exit 0$'"
+check "setup log trimmed to 8 runs" in_box bash -c "[[ \$(grep -c '^===== ' /var/log/bifrost-setup.log) == 8 ]]"
+check "--room with a space is refused" bash -c "! distrobox enter $box -- sudo $setup --room 'Bad Name'"
 check "bifrost-status runs" in_box /usr/local/bin/bifrost-status
 check "policies.json force-installs uBlock Origin" in_box jq -e \
     '.policies.ExtensionSettings["uBlock0@raymondhill.net"].installation_mode == "force_installed"' \
@@ -83,6 +87,16 @@ check "policies.json force-installs uBlock Origin" in_box jq -e \
 check "Bigscreen favorites written" grep -q '^storageId=bifrost-twitch.desktop$' "$test_home/.config/bigscreen-favs"
 check "update services run under systemd" in_box bash -c \
     'for s in bifrost-update-dropout bifrost-update-moonfin; do sudo systemctl start $s.service || exit 1; done'
+
+check "Moonfin reinstall verifies its checksum" in_box bash -c \
+    'sudo rm -f /var/lib/bifrost/moonfin-release && sudo /usr/local/bin/bifrost-update-moonfin'
+fake_reboot='BIFROST_REBOOT_CMD="echo REBOOT" BIFROST_REBOOT_INTERVAL=2 BIFROST_REBOOT_MAX_WAIT=4 /usr/local/bin/bifrost-reboot'
+check "weekly reboot goes ahead when nothing plays" in_box bash -c \
+    "out=\$(sudo env $fake_reboot) && ! grep -q playing <<<\"\$out\" && grep -q REBOOT <<<\"\$out\""
+check "weekly reboot waits while something plays" in_box bash -c \
+    "sudo systemd-inhibit --what=idle --who=test --why=playback sleep 20 & sleep 1
+     out=\$(sudo env $fake_reboot); kill %1 2>/dev/null
+     grep -q 'Something is playing' <<<\"\$out\" && grep -q REBOOT <<<\"\$out\""
 
 echo "==> Launching the Dropout web app headless (45 s)"
 in_box bash -c 'MOZ_HEADLESS=1 timeout 45 /usr/local/bin/bifrost-webapp dropout https://watch.dropout.tv' >/dev/null 2>&1 || true

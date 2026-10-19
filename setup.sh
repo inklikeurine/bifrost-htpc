@@ -9,7 +9,7 @@
 #   --room NAME  set the hostname to bifrost-NAME, e.g. --room bedroom
 #   --wifi       ask for a Wi-Fi network and its password, and connect to it
 #
-# Each run's output is also added to /var/log/bifrost-setup.log.
+# /var/log/bifrost-setup.log keeps the last 8 runs: each run's exit code, warnings and errors.
 set -euo pipefail
 
 repo=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -29,6 +29,11 @@ while (($#)); do
         *) echo "Unknown option: $1" >&2; usage >&2; exit 2 ;;
     esac
 done
+room=${room,,}
+if [[ -n $room && ! $room =~ ^[a-z0-9]([a-z0-9-]{0,53}[a-z0-9])?$ ]]; then
+    echo "--room must be letters, digits and dashes, e.g. --room livingroom" >&2
+    exit 2
+fi
 
 log() { printf '\n==> %s\n' "$*"; }
 note() { printf '    %s\n' "$*"; }
@@ -60,8 +65,33 @@ if ! grep -q '^VARIANT_ID=kinoite' /etc/os-release; then
     exit 1
 fi
 
-exec > >(tee -a /var/log/bifrost-setup.log) 2>&1
-printf '\n===== %s: setup.sh %s\n' "$(date '+%F %T')" "$args"
+# The terminal gets the full output; /var/log/bifrost-setup.log gets a summary of each
+# run (see finish), trimmed to the last 8 runs.
+setup_log=/var/log/bifrost-setup.log
+started=$(date '+%F %T')
+tmp=$(mktemp)
+run_output=$(mktemp)
+exec 3>&1 4>&2
+exec > >(tee "$run_output") 2>&1
+tee_pid=$!
+
+finish() {
+    local code=$?
+    # Hand the terminal back so tee sees end of input, then let it finish writing.
+    exec 1>&3 2>&4
+    wait "$tee_pid" 2>/dev/null || true
+    {
+        echo "===== $started: setup.sh${args:+ $args}: exit $code"
+        grep -iE 'warning|error' "$run_output" || true
+    } >>"$setup_log"
+    local runs
+    runs=$(grep -c '^===== ' "$setup_log")
+    if ((runs > 8)); then
+        awk -v skip=$((runs - 8)) '/^===== /{n++} n>skip' "$setup_log" >"$tmp" && cat "$tmp" >"$setup_log"
+    fi
+    rm -f "$tmp" "$run_output"
+}
+trap finish EXIT
 
 # A booted Kinoite install has /run/ostree-booted. A test container doesn't, so
 # rpm-ostree steps are skipped there.
@@ -71,19 +101,6 @@ booted=false
 systemd_up=false
 [[ -d /run/systemd/system ]] && systemd_up=true
 reboot_needed=false
-
-# ---------------------------------------------------------------------------
-if [[ -n $room ]]; then
-    log "Hostname"
-    want="bifrost-$room"
-    if [[ $(hostname) == "$want" ]]; then
-        note "already $want"
-    elif hostnamectl set-hostname "$want"; then
-        note "set to $want"
-    else
-        warn "couldn't set the hostname to $want"
-    fi
-fi
 
 # ---------------------------------------------------------------------------
 if $wifi; then
@@ -96,6 +113,26 @@ if $wifi; then
         note "connected to $ssid"
     else
         warn "couldn't connect to $ssid"
+    fi
+fi
+
+# Everything below downloads something. Stop now, before changing anything, rather
+# than partway through.
+if ! curl -fsS -o /dev/null --max-time 15 --retry 2 https://dl.flathub.org/repo/flathub.flatpakrepo; then
+    echo "ERROR: no internet connection. Connect the box (or run with --wifi) and try again." >&2
+    exit 1
+fi
+
+# ---------------------------------------------------------------------------
+if [[ -n $room ]]; then
+    log "Hostname"
+    want="bifrost-$room"
+    if [[ $(hostname) == "$want" ]]; then
+        note "already $want"
+    elif hostnamectl set-hostname "$want"; then
+        note "set to $want"
+    else
+        warn "couldn't set the hostname to $want"
     fi
 fi
 
@@ -162,8 +199,6 @@ while IFS= read -r -d '' src; do
 done < <(find "$repo/files/usr" "$repo/files/etc/systemd" -type f -print0)
 
 # Autologin straight into the Bigscreen session.
-tmp=$(mktemp)
-trap 'rm -f "$tmp"' EXIT
 sed "s/@USER@/$user/g" "$repo/files/etc/plasmalogin.conf.d/50-bifrost-autologin.conf" >"$tmp"
 put "$tmp" /etc/plasmalogin.conf.d/50-bifrost-autologin.conf || true
 if $booted && [[ ! -e /usr/share/wayland-sessions/plasma-bigscreen-wayland.desktop ]] && ! $reboot_needed; then
@@ -208,6 +243,11 @@ done
 
 # ---------------------------------------------------------------------------
 log "SSH"
+# A fresh install has no host keys until sshd first starts, and sshd -t below needs them.
+if ! compgen -G '/etc/ssh/ssh_host_*_key.pub' >/dev/null; then
+    ssh-keygen -A >/dev/null
+    note "generated SSH host keys"
+fi
 home=$(getent passwd "$user" | cut -d: -f6)
 keys="$repo/config/authorized_keys"
 have_key=false
@@ -222,13 +262,24 @@ if [[ -s $keys ]] && grep -q '^\(ssh-\|ecdsa-\|sk-\)' "$keys"; then
     done < <(grep '^\(ssh-\|ecdsa-\|sk-\)' "$keys")
     chown "$user:$(id -gn "$user")" "$home/.ssh/authorized_keys"
     chmod 0600 "$home/.ssh/authorized_keys"
+    # Files created by root can carry the wrong SELinux label, and sshd then ignores the
+    # key. Password login goes off below, so that would lock SSH out.
+    if command -v selinuxenabled >/dev/null && selinuxenabled; then
+        restorecon -R "$home/.ssh"
+    fi
     ((added)) && note "added $added key(s) to $home/.ssh/authorized_keys"
 fi
 if $have_key; then
     if put "$repo/files/etc/ssh/sshd_config.d/50-bifrost.conf" /etc/ssh/sshd_config.d/50-bifrost.conf; then
-        note "password login is now off"
-        if $systemd_up; then
-            systemctl try-reload-or-restart sshd.service || warn "sshd didn't restart; check: systemctl status sshd"
+        # Never restart sshd on a config it rejects: that would take SSH down.
+        if ! sshd -t; then
+            rm -f /etc/ssh/sshd_config.d/50-bifrost.conf
+            warn "sshd rejected 50-bifrost.conf; removed it, password login stays on"
+        else
+            note "password login is now off"
+            if $systemd_up; then
+                systemctl try-reload-or-restart sshd.service || warn "sshd didn't restart; check: systemctl status sshd"
+            fi
         fi
     fi
 else
@@ -391,10 +442,6 @@ done
 
 # ---------------------------------------------------------------------------
 log "Connect with SSH"
-if ! compgen -G '/etc/ssh/ssh_host_*_key.pub' >/dev/null; then
-    ssh-keygen -A >/dev/null
-    note "generated SSH host keys"
-fi
 note "ssh $user@$(hostname -s).local"
 note "IPv4 addresses: $(hostname -I 2>/dev/null | tr ' ' '\n' | grep -v : | xargs)"
 note "host key fingerprints (check these on your first connection):"

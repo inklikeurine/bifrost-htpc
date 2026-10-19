@@ -9,7 +9,10 @@ state=/var/lib/bifrost/moonfin-release
 
 release=$(curl -fsSL --retry 3 "https://api.github.com/repos/$repo/releases/latest")
 tag=$(jq -r .tag_name <<<"$release")
-url=$(jq -r '.assets[] | select(.name | test("^Moonfin_Linux_v.*\\.flatpak$")) | .browser_download_url' <<<"$release" | head -n1)
+asset=$(jq -c '[.assets[] | select(.name | test("^Moonfin_Linux_v.*\\.flatpak$"))][0] // empty' <<<"$release")
+url=$(jq -r '.browser_download_url // empty' <<<"$asset")
+# GitHub publishes each asset's checksum as "sha256:<hex>".
+sha256=$(jq -r '.digest // empty | ltrimstr("sha256:")' <<<"$asset")
 if [[ -z $url ]]; then
     echo "Moonfin $tag has no x86_64 .flatpak asset; leaving the installed version alone." >&2
     exit 1
@@ -23,7 +26,11 @@ fi
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 echo "Installing Moonfin $tag from $url"
-curl -fsSL --retry 3 -o "$tmp/moonfin.flatpak" "$url"
+download() {
+    curl -fsSL --retry 3 -o "$tmp/moonfin.flatpak" "$url" || return 1
+    [[ -z $sha256 ]] || sha256sum --quiet -c <<<"$sha256  $tmp/moonfin.flatpak"
+}
+download || { echo "Download failed or didn't match its checksum; retrying."; download; }
 # --reinstall replaces the old version in place. App data in ~/.var/app (settings,
 # server login) isn't touched.
 install_bundle() { flatpak install --system --noninteractive -y --reinstall --bundle "$tmp/moonfin.flatpak"; }

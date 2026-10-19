@@ -29,10 +29,13 @@ echo "==> Extracting the ostree repo"
 unsquashfs -q -n -d "$work/squash" "$work/images/install.img" ostree >/dev/null 2>&1 || true
 rm -f "$work/images/install.img"
 ref=$(cd "$work/squash/ostree/repo/refs/heads" && find . -type f | sed 's|^\./||' | head -n1)
+# The ref looks like fedora/44/x86_64/kinoite; use the matching Fedora release for helpers.
+release=$(cut -d/ -f2 <<<"$ref")
+toolbox=registry.fedoraproject.org/fedora-toolbox:$release
 echo "    ref: $ref"
 
 echo "==> Checking out $ref"
-podman run --rm -v "$work:/work:z" registry.fedoraproject.org/fedora-toolbox:44 bash -c "
+podman run --rm -v "$work:/work:z" "$toolbox" bash -c "
     dnf -y -q install ostree >/dev/null 2>&1
     ostree --repo=/work/squash/ostree/repo log '$ref' | sed -n 's/^Version: *//p' | head -n1 >/work/version
     ostree --repo=/work/squash/ostree/repo checkout --user-mode '$ref' /work/rootfs"
@@ -60,7 +63,7 @@ echo "==> Building localhost/bifrost-test-kinoite:$version"
 ctx=$work/ctx
 mkdir -p "$ctx"
 util_linux=$(podman run --rm "localhost/kinoite-iso:$version" rpm -q --qf '%{version}-%{release}' util-linux-core)
-podman run --rm -v "$ctx:/out:z" registry.fedoraproject.org/fedora-toolbox:44 \
+podman run --rm -v "$ctx:/out:z" "$toolbox" \
     bash -c "cd /out && dnf -q download --repo=fedora,updates pigz util-linux-script-$util_linux"
 cat >"$ctx/Containerfile" <<EOF
 FROM localhost/kinoite-iso:$version

@@ -68,7 +68,7 @@ Before the reinstall, copy off anything worth keeping. At minimum, the 12 custom
    sudo ./setup.sh --room bedroom --wifi
    ```
 
-   `--room bedroom` sets the hostname to `bifrost-bedroom`. `--wifi` asks for the network and password (leave
+   `--room bedroom` sets the hostname to `bifrost-bedroom` (letters, digits and dashes only). `--wifi` asks for the network and password (leave
    it out on Ethernet or if already connected). The run ends by printing the SSH command
    (`ssh you@bifrost-bedroom.local`), the box's IPv4 addresses and its host key fingerprints; check the
    fingerprints when you first connect.
@@ -77,8 +77,9 @@ Before the reinstall, copy off anything worth keeping. At minimum, the 12 custom
 5. Run `sudo ./setup.sh` again. It should report nothing to change.
 6. Work through the per-box checklist below.
 
-`--user NAME` picks the autologin account if you aren't running the script with `sudo` from it. Each run is
-added to `/var/log/bifrost-setup.log`. Over SSH, `bifrost-status` shows the OS deployments and layered
+`--user NAME` picks the autologin account if you aren't running the script with `sudo` from it. Without an
+internet connection the script stops before changing anything. `/var/log/bifrost-setup.log` keeps the last 8
+runs: each run's exit code plus any warnings and errors. Over SSH, `bifrost-status` shows the OS deployments and layered
 packages, each timer's last result and next run, the Moonfin and extension versions, and the installed apps.
 
 ### What the script does
@@ -89,7 +90,7 @@ packages, each timer's last result and next run, the Moonfin and extension versi
 | Flatpaks | Adds Flathub, installs `config/flatpaks.txt` system-wide, and removes the installer's Fedora Flatpaks listed in `config/flatpaks-remove.txt`. |
 | System files | Copies `files/usr/local/…` (helper scripts, Twitch and Dropout launchers, Firefox prefs and policy template) and `files/etc/systemd/system/…` (timers). Writes the autologin file for your account. |
 | Updates | Sets `AutomaticUpdatePolicy=stage` in `/etc/rpm-ostreed.conf` and turns on the timers below. |
-| SSH | Adds `config/authorized_keys` to your `~/.ssh/authorized_keys` and turns on `sshd`. Password login goes off only once a key is in place. Kinoite's firewall already allows SSH, and avahi makes `<hostname>.local` work on the LAN. |
+| SSH | Adds `config/authorized_keys` to your `~/.ssh/authorized_keys` and turns on `sshd`. Password login goes off only once a key is in place (relabelled for SELinux) and `sshd -t` accepts the new config. Kinoite's firewall already allows SSH, and avahi makes `<hostname>.local` work on the LAN. |
 | Firefox | Writes `/etc/firefox/policies/policies.json`, which force-installs Leanback for Dropout and uBlock Origin (against Twitch ads; addons.mozilla.org keeps it updated). |
 | Moonfin | Installs the latest release's `.flatpak` bundle. |
 | Per account | Copies `wallpapers/`. Turns off screen locking, auto-suspend on AC, Baloo file indexing, Discover's notifier and the Welcome Center pop-up. Hides `config/hidden-apps.txt` from Bigscreen and writes the favorites in the order of `config/favorites.txt`; re-running resets both to those lists. |
@@ -104,7 +105,17 @@ Runs missed while the box was off happen at the next boot, except the reboot.
 | `bifrost-flatpak-update.timer` | daily, ~03:00 | `flatpak update`, then removes unused runtimes. |
 | `bifrost-update-moonfin.timer` | Sunday, ~03:30 | Installs a newer Moonfin release if there is one. |
 | `bifrost-update-dropout.timer` | Sunday, ~03:30 | Points `policies.json` at the newest Leanback for Dropout release. |
-| `bifrost-weekly-reboot.timer` | Sunday, 04:30 | Reboots, which applies the staged OS update. |
+| `bifrost-weekly-reboot.timer` | Sunday, 04:30 | Reboots, which applies the staged OS update. If something is playing (audio running, or an app keeping the screen awake), it rechecks every 30 min and reboots anyway after 3 h. |
+
+### Troubleshooting
+
+- **Roll back a bad update:** `sudo rpm-ostree rollback`, then reboot. Or pick the previous entry in the boot
+  menu: hold Shift while the box starts. After a failed boot, Fedora shows the menu by itself.
+- **See what happened:** `bifrost-status` for the summary, `journalctl -u 'bifrost-*'` for the timers,
+  `/var/log/bifrost-setup.log` for setup runs.
+- **Run an update now:** `sudo systemctl start bifrost-update-moonfin` (or `bifrost-update-dropout`,
+  `bifrost-flatpak-update`).
+- **Show a hidden app:** delete its line in `config/hidden-apps.txt` and re-run the script.
 
 ### Hidden apps
 
@@ -148,7 +159,7 @@ Bigscreen's own default entries. Hidden apps stay installed. To show one again, 
 
 - **Why:** Moonfin's build script makes the bundle without an update source, so Flatpak's normal updates (Discover, auto-updates) never see new Moonfin versions. The app shows a banner when a new version is out, but the only format Moonfin documents as updating in place is the AppImage.
 - **What still updates normally:** Moonfin's runtime (GNOME Platform) comes from Flathub, which the script adds, so it updates with everything else.
-- **The fix:** `bifrost-update-moonfin` (run by the script, then every Sunday) asks GitHub for the latest release. If it differs from the release it last installed, it downloads that `.flatpak` and reinstalls over the old one, retrying once on failure. App data in `~/.var/app`, including settings and the server login, isn't touched.
+- **The fix:** `bifrost-update-moonfin` (run by the script, then every Sunday) asks GitHub for the latest release. If it differs from the release it last installed, it downloads that `.flatpak`, checks it against the checksum GitHub publishes, and reinstalls over the old one, retrying once on failure. App data in `~/.var/app`, including settings and the server login, isn't touched.
 
 ### Dropout.tv
 
@@ -192,7 +203,10 @@ These need real hardware; the container test can't cover them.
 
 ## Testing
 
-`tests/` runs `setup.sh` in a throwaway Kinoite container built from the ISO:
+`tests/lint.sh` checks every script with shellcheck, the JSON files with `jq` and the launchers with
+`desktop-file-validate`, in about a second. GitHub Actions runs it on every push and pull request.
+
+`tests/` also runs `setup.sh` in a throwaway Kinoite container built from the ISO:
 
 ```bash
 tests/build-test-image.sh ../Fedora-Kinoite-ostree-x86_64-44-1.7.iso
@@ -204,7 +218,7 @@ tests/run-distrobox-test.sh
 
 The first command turns the ISO's OS tree into a podman image. The second creates a distrobox with its own home directory (your real `~/.config` is never touched), runs the script twice, checks the second run changes nothing, then checks the results, including launching the Dropout web app in headless Firefox and confirming both extensions install.
 
-A container can't test rpm-ostree layering, the hostname, `--wifi`, starting `sshd` (the box shares the host's network), or anything that needs a screen. Last run with Kinoite 44.1.7 on 2026-10-18: all 30 checks passed.
+A container can't test rpm-ostree layering, the hostname, `--wifi`, starting `sshd` (the box shares the host's network), or anything that needs a screen. Last run with Kinoite 44.1.7 on 2026-10-18: all 35 checks passed.
 
 ## Sources
 

@@ -1,0 +1,39 @@
+#!/usr/bin/bash
+# Weekly reboot that waits while something is playing.
+#
+# Checks every 30 minutes for up to 3 hours, then reboots anyway so the staged OS
+# update still gets applied. "Playing" means an idle inhibitor is held, or any logged-in
+# user has an audio stream running (video and game streams both play audio).
+set -euo pipefail
+
+# Overridable for tests.
+interval=${BIFROST_REBOOT_INTERVAL:-1800}
+max_wait=${BIFROST_REBOOT_MAX_WAIT:-10800}
+reboot_cmd=${BIFROST_REBOOT_CMD:-systemctl reboot}
+
+playing() {
+    if systemd-inhibit --list --no-legend --no-pager 2>/dev/null |
+        awk '{for (i = 1; i <= NF; i++) if ($i ~ /(^|:)idle(:|$)/) found = 1} END {exit !found}'; then
+        return 0
+    fi
+    local uid user
+    for uid in $(loginctl list-users --no-legend 2>/dev/null | awk '{print $1}'); do
+        [[ -S /run/user/$uid/pulse/native ]] || continue
+        user=$(id -nu "$uid") || continue
+        if runuser -u "$user" -- env XDG_RUNTIME_DIR="/run/user/$uid" pactl list sink-inputs 2>/dev/null |
+            grep -q 'Corked: no'; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+waited=0
+while playing && ((waited < max_wait)); do
+    echo "Something is playing; checking again in $((interval / 60)) min."
+    sleep "$interval"
+    waited=$((waited + interval))
+done
+((waited < max_wait)) || echo "Still playing after $((max_wait / 3600)) h; rebooting anyway."
+echo "Rebooting."
+$reboot_cmd
