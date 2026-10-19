@@ -11,4 +11,6 @@ mkdir -p "$profile"
 # Refresh the prefs on every launch so a repo change reaches existing profiles.
 cp /usr/local/share/bifrost/firefox-user.js "$profile/user.js"
 
-exec /usr/bin/firefox --kiosk --no-remote --profile "$profile" "$url"
+# --class sets the window's app id to the launcher's name, so the window shows the
+# launcher's icon instead of Firefox's.
+exec /usr/bin/firefox --kiosk --no-remote --class "bifrost-$name" --profile "$profile" "$url"

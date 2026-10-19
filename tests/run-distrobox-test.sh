@@ -85,6 +85,8 @@ check "policies.json force-installs uBlock Origin" in_box jq -e \
     '.policies.ExtensionSettings["uBlock0@raymondhill.net"].installation_mode == "force_installed"' \
     /etc/firefox/policies/policies.json
 check "Bigscreen favorites written" grep -q '^storageId=bifrost-twitch.desktop$' "$test_home/.config/bigscreen-favs"
+check "web-app icons installed" in_box test -f /usr/local/share/icons/hicolor/scalable/apps/bifrost-twitch.svg \
+    -a -f /usr/local/share/icons/hicolor/512x512/apps/bifrost-dropout.png
 check "update services run under systemd" in_box bash -c \
     'for s in bifrost-update-dropout bifrost-update-moonfin; do sudo systemctl start $s.service || exit 1; done'
 

@@ -95,7 +95,7 @@ packages, each timer's last result and next run, the Moonfin and extension versi
 |---|---|
 | Layered packages | `rpm-ostree upgrade --install=…` for each package in `config/layered-packages.txt` not already requested. `upgrade --install` layers onto the newest Fedora image: Bigscreen 6.7.5 (Fedora updates) needs a newer Plasma than the 44.1.7 ISO's 6.6.4, so layering onto the ISO's image would fail or pick an old Bigscreen snapshot. |
 | Flatpaks | Adds Flathub, installs `config/flatpaks.txt` system-wide, and removes the installer's Fedora Flatpaks listed in `config/flatpaks-remove.txt`. |
-| System files | Copies `files/usr/local/…` (helper scripts, Twitch and Dropout launchers, Firefox prefs and policy template) and `files/etc/systemd/system/…` (timers). Writes the autologin file for your account. |
+| System files | Copies `files/usr/local/…` (helper scripts, Twitch and Dropout launchers and their icons, Firefox prefs and policy template) and `files/etc/systemd/system/…` (timers). Writes the autologin file for your account. |
 | Updates | Sets `AutomaticUpdatePolicy=stage` in `/etc/rpm-ostreed.conf` and turns on the timers below. |
 | SSH | Adds `config/authorized_keys` to your `~/.ssh/authorized_keys` and turns on `sshd`. Password login goes off only once a key is in place (relabelled for SELinux) and `sshd -t` accepts the new config. Kinoite's firewall already allows SSH, and avahi makes `<hostname>.local` work on the LAN. |
 | Firefox | Writes `/etc/firefox/policies/policies.json`, which force-installs Leanback for Dropout and uBlock Origin (against Twitch ads; addons.mozilla.org keeps it updated). |
@@ -156,7 +156,7 @@ Bigscreen's own default entries. Hidden apps stay installed. To show one again, 
 | Twitch | twitch.tv in Firefox, full screen, with uBlock Origin | Maybe develop a simple Leanback UI later |
 | Dropout | dropout.tv in Firefox, full screen, with your extension | The extension supplies the 10-foot UI |
 
-**The "web apps":** each is a launcher that opens Firefox in kiosk mode (full screen, no toolbars) with its own profile: `bifrost-webapp twitch https://www.twitch.tv` runs `firefox --kiosk --no-remote --profile ~/.local/share/bifrost/firefox/twitch https://www.twitch.tv`. The profile is created on first launch, and `firefox-user.js` is copied into it on every launch: no first-run pages, no restore-session prompt after the weekly reboot, autoplay on, notification prompts off. Both show up as normal tiles in Bigscreen. Kinoite's Firefox plays H.264, VP9 and AV1 out of the box, so Twitch needs no extra codec packages.
+**The "web apps":** each is a launcher that opens Firefox in kiosk mode (full screen, no toolbars) with its own profile: `bifrost-webapp twitch https://www.twitch.tv` runs `firefox --kiosk --no-remote --class bifrost-twitch --profile ~/.local/share/bifrost/firefox/twitch https://www.twitch.tv`. The profile is created on first launch, and `firefox-user.js` is copied into it on every launch: no first-run pages, no restore-session prompt after the weekly reboot, autoplay on, notification prompts off. Both show up as normal tiles in Bigscreen with their own icons, and `--class` makes the open window use the launcher's icon too. The icons are in `files/usr/local/share/icons/hicolor/`: Dropout's comes from dropout.tv's web-app manifest, and Twitch's is the [Simple Icons](https://simpleicons.org) glitch logo on a purple circle. Kinoite's Firefox plays H.264, VP9 and AV1 out of the box, so Twitch needs no extra codec packages.
 
 ### Moonfin: Flatpak bundle
 
