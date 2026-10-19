@@ -30,6 +30,10 @@ in_box() { distrobox enter "$box" -- "$@"; }
 # distrobox mounts the host's / at /run/host.
 setup=/run/host$repo/setup.sh
 
+# distrobox's init binds the host's /usr/share/icons over /usr/local/share/icons, which
+# root in the box can't write. A real Kinoite box has its own, so drop the bind.
+in_box sudo umount /usr/local/share/icons
+
 # The ISO installer adds Fedora Flatpaks that a container doesn't have. Install one
 # from Flathub under the same app ID as a stand-in, to check setup.sh removes it.
 echo "==> Installing org.kde.kmines as a stand-in for the installer's Flatpaks"

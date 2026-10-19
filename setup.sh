@@ -57,13 +57,18 @@ export XDG_DATA_DIRS=/var/lib/flatpak/exports/share:${XDG_DATA_DIRS:-/usr/local/
 # Lines of a config list, without comments or blank lines.
 read_list() { sed -e 's/#.*//' -e 's/[[:space:]]*$//' -e '/^$/d' "$1"; }
 
-# put SRC DEST [MODE]: install SRC at DEST only if it differs. Returns 1 if unchanged.
+# put SRC DEST [MODE]: install SRC at DEST only if it differs. Returns 0 if it wrote
+# the file, 1 if it was already current, 2 (with a warning) if it couldn't write it.
+# Callers run it as "put ... || true", which turns off set -e here, so check install.
 put() {
     local src=$1 dest=$2 mode=${3:-0644}
     if [[ -f $dest ]] && cmp -s "$src" "$dest" && [[ $(stat -c %a "$dest") == "${mode#0}" ]]; then
         return 1
     fi
-    install -D -m "$mode" "$src" "$dest"
+    if ! install -D -m "$mode" "$src" "$dest"; then
+        warn "couldn't write $dest"
+        return 2
+    fi
     note "updated $dest"
 }
 
