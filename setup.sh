@@ -35,9 +35,21 @@ if [[ -n $room && ! $room =~ ^[a-z0-9]([a-z0-9-]{0,53}[a-z0-9])?$ ]]; then
     exit 2
 fi
 
-log() { printf '\n==> %s\n' "$*"; }
+# Steps are numbered "[n/total]"; total is counted once the options are known.
+step=0
+total=0
+log() { step=$((step + 1)); printf '\n==> [%d/%d] %s\n' "$step" "$total" "$*"; }
 note() { printf '    %s\n' "$*"; }
-warn() { printf '    WARNING: %s\n' "$*" >&2; }
+# Warnings and errors also go to this run's entry in the setup log (see finish).
+notes=""
+record() { if [[ -n $notes ]]; then echo "$*" >>"$notes"; fi; }
+warn() { printf '    WARNING: %s\n' "$*" >&2; record "WARNING: $*"; }
+error() { printf 'ERROR: %s\n' "$*" >&2; record "ERROR: $*"; }
+
+# Flatpak and curl only draw progress bars on a terminal; under systemd or with output
+# redirected, they get quiet options instead.
+flatpak_opts=(--system -y)
+[[ -t 1 ]] || flatpak_opts+=(--noninteractive)
 
 # Lines of a config list, without comments or blank lines.
 read_list() { sed -e 's/#.*//' -e 's/[[:space:]]*$//' -e '/^$/d' "$1"; }
@@ -65,33 +77,40 @@ if ! grep -q '^VARIANT_ID=kinoite' /etc/os-release; then
     exit 1
 fi
 
-# The terminal gets the full output; /var/log/bifrost-setup.log gets a summary of each
-# run (see finish), trimmed to the last 8 runs.
+# The terminal gets the full output, untouched so progress bars still draw.
+# /var/log/bifrost-setup.log gets each run's exit code, warnings and errors, and keeps
+# the last 8 runs.
 setup_log=/var/log/bifrost-setup.log
 started=$(date '+%F %T')
 tmp=$(mktemp)
-run_output=$(mktemp)
-exec 3>&1 4>&2
-exec > >(tee "$run_output") 2>&1
-tee_pid=$!
+notes=$(mktemp)
 
 finish() {
     local code=$?
-    # Hand the terminal back so tee sees end of input, then let it finish writing.
-    exec 1>&3 2>&4
-    wait "$tee_pid" 2>/dev/null || true
     {
         echo "===== $started: setup.sh${args:+ $args}: exit $code"
-        grep -iE 'warning|error' "$run_output" || true
+        cat "$notes"
     } >>"$setup_log"
     local runs
     runs=$(grep -c '^===== ' "$setup_log")
     if ((runs > 8)); then
         awk -v skip=$((runs - 8)) '/^===== /{n++} n>skip' "$setup_log" >"$tmp" && cat "$tmp" >"$setup_log"
     fi
-    rm -f "$tmp" "$run_output"
+    rm -f "$tmp" "$notes"
 }
 trap finish EXIT
+# A command that stops the script (set -e) gets logged with its line number.
+trap 'error "line $LINENO: \"$BASH_COMMAND\" failed (exit $?)"' ERR
+
+mapfile -t accounts < <(getent passwd | awk -F: '$3 >= 1000 && $3 < 60000 && $7 !~ /(nologin|false)$/ {print $1}')
+# Wi-Fi and Hostname (optional), 7 system steps, one per account with a home, then
+# Connect with SSH.
+total=8
+for account in "${accounts[@]}"; do
+    [[ -d $(getent passwd "$account" | cut -d: -f6) ]] && total=$((total + 1))
+done
+$wifi && total=$((total + 1))
+[[ -n $room ]] && total=$((total + 1))
 
 # A booted Kinoite install has /run/ostree-booted. A test container doesn't, so
 # rpm-ostree steps are skipped there.
@@ -119,7 +138,7 @@ fi
 # Everything below downloads something. Stop now, before changing anything, rather
 # than partway through.
 if ! curl -fsS -o /dev/null --max-time 15 --retry 2 https://dl.flathub.org/repo/flathub.flatpakrepo; then
-    echo "ERROR: no internet connection. Connect the box (or run with --wifi) and try again." >&2
+    error "no internet connection. Connect the box (or run with --wifi) and try again."
     exit 1
 fi
 
@@ -150,6 +169,7 @@ else
     done
     if ((${#missing[@]})); then
         note "adding ${missing[*]}"
+        note "this downloads the newest Fedora image too (often 1-2 GB) and can take a while"
         # "upgrade --install" layers onto the newest Fedora image rather than the one
         # installed from the ISO. Bigscreen in Fedora's updates repo needs the Plasma
         # version of the newest image.
@@ -173,7 +193,7 @@ for app in "${apps[@]}"; do
 done
 if ((${#to_install[@]})); then
     note "installing ${to_install[*]}"
-    flatpak install --system --noninteractive -y flathub "${to_install[@]}"
+    flatpak install "${flatpak_opts[@]}" flathub "${to_install[@]}"
 else
     note "all installed"
 fi
@@ -185,7 +205,7 @@ for app in "${unwanted[@]}"; do
 done
 if ((${#to_remove[@]})); then
     note "removing ${to_remove[*]}"
-    flatpak uninstall --system --noninteractive -y "${to_remove[@]}"
+    flatpak uninstall "${flatpak_opts[@]}" "${to_remove[@]}"
 fi
 
 # ---------------------------------------------------------------------------
@@ -374,7 +394,6 @@ mapfile -t hidden < <(read_list "$repo/config/hidden-apps.txt")
 hidden=("${bigscreen_hidden[@]}" "${hidden[@]}")
 welcome_version=$(rpm -q --qf '%{version}' plasma-welcome 2>/dev/null || echo 1.0)
 
-mapfile -t accounts < <(getent passwd | awk -F: '$3 >= 1000 && $3 < 60000 && $7 !~ /(nologin|false)$/ {print $1}')
 for account in "${accounts[@]}"; do
     acct_home=$(getent passwd "$account" | cut -d: -f6)
     [[ -d $acct_home ]] || continue
@@ -449,7 +468,7 @@ for key in /etc/ssh/ssh_host_*_key.pub; do
     note "  $(ssh-keygen -lf "$key")"
 done
 
-log "Done"
+printf '\n==> Done\n'
 if $reboot_needed; then
     note "Reboot to finish: the new OS image with the layered packages is staged."
     note "After the reboot, run this script once more to check everything."

@@ -72,8 +72,11 @@ Before the reinstall, copy off anything worth keeping. At minimum, the 12 custom
    sudo ./setup.sh --room bedroom --wifi
    ```
 
-   `--room bedroom` sets the hostname to `bifrost-bedroom` (letters, digits and dashes only). `--wifi` asks for the network and password (leave
-   it out on Ethernet or if already connected). The run ends by printing the SSH command
+   Steps are numbered (`[3/9] System files`), and downloads show progress bars. The first run also downloads
+   the newest Fedora image with Bigscreen layered on, which can take a while.
+
+   `--room bedroom` sets the hostname to `bifrost-bedroom` (letters, digits and dashes only). `--wifi` asks
+   for the network and password (leave it out on Ethernet or if already connected). The run ends by printing the SSH command
    (`ssh you@bifrost-bedroom.local`), the box's IPv4 addresses and its host key fingerprints; check the
    fingerprints when you first connect.
 4. Reboot. The first run staged a new OS image with Bigscreen layered on; autologin into Bigscreen starts
