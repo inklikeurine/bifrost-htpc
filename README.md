@@ -109,12 +109,12 @@ connection is saved. If the run ends by asking for a reboot, reboot.
 |---|---|
 | Layered packages | `rpm-ostree upgrade --install=…` for each package in `config/layered-packages.txt` not already requested. `upgrade --install` layers onto the newest Fedora image: Bigscreen 6.7.5 (Fedora updates) needs a newer Plasma than the 44.1.7 ISO's 6.6.4, so layering onto the ISO's image would fail or pick an old Bigscreen snapshot. |
 | Flatpaks | Adds Flathub, installs `config/flatpaks.txt` system-wide, and removes the installer's Fedora Flatpaks listed in `config/flatpaks-remove.txt`. |
-| System files | Copies `files/usr/local/…` (helper scripts, Twitch and Dropout launchers and their icons, Firefox prefs and policy template) and `files/etc/systemd/system/…` (timers). Writes the autologin file for your account. |
+| System files | Copies `files/usr/local/…` (helper scripts, Twitch and Dropout launchers and their icons, Firefox prefs and policy template) `files/etc/systemd/system/…` (timers) and `files/etc/wireplumber/…` (sound to the TV, see Sound). Writes the autologin file for your account. |
 | Updates | Sets `AutomaticUpdatePolicy=stage` in `/etc/rpm-ostreed.conf` and turns on the timers below. |
 | SSH | Adds `config/authorized_keys` to your `~/.ssh/authorized_keys` and turns on `sshd`. Password login goes off only once a key is in place (relabelled for SELinux) and `sshd -t` accepts the new config. Kinoite's firewall already allows SSH, and avahi makes `<hostname>.local` work on the LAN. |
 | Firefox | Writes `/etc/firefox/policies/policies.json`, which force-installs Leanback for Dropout and uBlock Origin (against Twitch ads; addons.mozilla.org keeps it updated). |
 | Moonfin | Installs the latest release's `.flatpak` bundle. |
-| Per account | Copies `wallpapers/`. Turns off screen locking, auto-suspend on AC, Baloo file indexing, Discover's notifier and the Welcome Center pop-up. Adds a KWin window rule that forces Moonfin full screen (it has no setting for this and reopens however it was last closed). Hides `config/hidden-apps.txt` from Bigscreen and writes the favorites in the order of `config/favorites.txt`; re-running resets both to those lists. |
+| Per account | Copies `wallpapers/`. Turns off screen locking, auto-suspend on AC, Baloo file indexing, Discover's notifier and the Welcome Center pop-up. Adds a KWin window rule that forces Moonfin full screen (it has no setting for this and reopens however it was last closed). Hides `config/hidden-apps.txt` from Bigscreen and writes the favorites in the order of `config/favorites.txt`; re-running resets both to those lists. Until Moonfin's first start, sets aside the wallet KWallet made at the first password login (see the checklist). |
 
 ### Timers
 
@@ -159,6 +159,18 @@ Bigscreen's own default entries. Hidden apps stay installed. To show one again, 
 
 - **Autologin straight into the Bigscreen session.** Kinoite uses Plasma Login Manager, not SDDM. The script writes `/etc/plasmalogin.conf.d/50-bifrost-autologin.conf` with `User=`, `Session=plasma-bigscreen-wayland.desktop` (from the `plasma-bigscreen-wayland` package) and `Relogin=true`, which logs straight back in if the session exits or crashes.
 
+## Sound
+
+The TV gets the sound over HDMI, or over DisplayPort with an adapter cable. On Intel graphics both carry
+audio. The HDMI/DisplayPort outputs share one sound card with the analog outputs, and PipeWire's session
+manager (WirePlumber) ranks analog higher, so a box with a built-in speaker, like the ThinkCentre, plays
+through that. `/etc/wireplumber/wireplumber.conf.d/50-bifrost-tv-audio.conf` puts the TV first.
+
+The TV's output only counts as present while the screen is on: when Plasma turns the screen off after
+10 minutes idle, sound falls back to the box's own speaker, and returns to the TV when the screen wakes.
+Check with `wpctl status` (the TV's sink is `…hdmi-stereo`) or `cat /proc/asound/card0/eld*` (the TV's
+name, with `eld_valid 1`).
+
 ## App plan
 
 | Service | Client | Notes |
@@ -199,6 +211,12 @@ Done once on each box, outside the repo.
 - **Moonfin:** sign in and turn on TV mode. Moonfin stores the login in KWallet, which the script can't set up:
   when KWallet asks to create a wallet, choose the classic (Blowfish) type and leave the password blank, so
   autologin never meets a password prompt.
+  - The first login after the install, with a password, has KWallet's PAM module create the wallet with that
+    password. The script sets that wallet aside (to `~/.local/share/kwalletd/backup-<date>/`) if Moonfin
+    hasn't started yet, so Moonfin's first start asks to create a new one.
+  - If Moonfin instead asks for a wallet **password** on every start, the old wallet is still there: move
+    `~/.local/share/kwalletd/kdewallet.*` into a backup folder, run `pkill ksecretd`, start Moonfin, create
+    the wallet as above and sign in again.
 - **TV:** LAN access only. Block its internet access at the router.
 
 ## House rules
@@ -216,6 +234,7 @@ These need real hardware; the container test can't cover them.
 - **Closing the web apps with the remote:** kiosk mode has no close button. Try the remote's back and home keys, and Alt+F4 from a keyboard.
 - **First boot into Bigscreen:** autologin, the favorites row and the wallpapers picker.
 - **KWallet:** the wallet dialog matches the checklist, and a blank password really means no prompt after a reboot.
+- **Sound on the TV** after a reboot and after the screen wakes (see Sound).
 - **Hardware video decode** in Firefox and Moonlight (Intel VA-API; `libva-intel-media-driver` ships with Kinoite).
 - **The weekly reboot** comes back into Bigscreen on its own, with the staged update applied.
 - **Hidden apps and Welcome Center:** the home screen shows only the favorites plus System Settings, Konsole and Discover, and Welcome Center doesn't appear.

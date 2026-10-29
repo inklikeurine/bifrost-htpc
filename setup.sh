@@ -218,13 +218,17 @@ fi
 
 # ---------------------------------------------------------------------------
 log "System files"
-# Helper scripts, launchers and shared data. /usr/local is writable on Kinoite.
+# Helper scripts, launchers, shared data, timers and the WirePlumber rule that sends
+# sound to the TV. /usr/local and /etc are writable on Kinoite.
+audio_changed=false
 while IFS= read -r -d '' src; do
     rel=${src#"$repo/files/"}
     mode=0644
     [[ -x $src ]] && mode=0755
-    put "$src" "/$rel" "$mode" || true
-done < <(find "$repo/files/usr" "$repo/files/etc/systemd" -type f -print0)
+    if put "$src" "/$rel" "$mode"; then
+        case $rel in etc/wireplumber/*) audio_changed=true ;; esac
+    fi
+done < <(find "$repo/files/usr" "$repo/files/etc/systemd" "$repo/files/etc/wireplumber" -type f -print0)
 
 # Autologin straight into the Bigscreen session.
 sed "s/@USER@/$user/g" "$repo/files/etc/plasmalogin.conf.d/50-bifrost-autologin.conf" >"$tmp"
@@ -482,6 +486,27 @@ for account in "${accounts[@]}"; do
             >/dev/null 2>&1 || true
     fi
     note "Moonfin opens full screen"
+
+    # WirePlumber reads its rules at startup; restart it in a running session.
+    if $audio_changed && [[ -S /run/user/$uid/bus ]]; then
+        as_user env XDG_RUNTIME_DIR="/run/user/$uid" systemctl --user try-restart wireplumber.service || true
+        note "restarted WirePlumber for the new audio rule"
+    fi
+
+    # Moonfin keeps its login in KWallet. The first login after the install, with a
+    # password, has KWallet's PAM module create the wallet with that password, and
+    # autologin can never unlock it: Moonfin then asks for it on every start. Until
+    # Moonfin has first run, set that wallet aside (kept in a backup folder), so
+    # Moonfin's first start creates a new one and the checklist's blank password works.
+    # ksecretd saves an open wallet when it exits, so stop it first.
+    wallets="$acct_home/.local/share/kwalletd"
+    if [[ ! -e $acct_home/.var/app/org.moonfin.linux && -e $wallets/kdewallet.kwl ]]; then
+        pkill -u "$account" -x ksecretd && sleep 2
+        backup="$wallets/backup-$(date +%F)"
+        as_user mkdir -p "$backup"
+        mv "$wallets"/kdewallet.* "$backup/"
+        note "moved the login-password wallet to $backup; Moonfin creates a new one"
+    fi
 
     # Bigscreen favorites, in the order of config/favorites.txt.
     as_user mkdir -p "$acct_home/.config"

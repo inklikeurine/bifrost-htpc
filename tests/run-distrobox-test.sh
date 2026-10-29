@@ -40,6 +40,10 @@ echo "==> Installing org.kde.kmines as a stand-in for the installer's Flatpaks"
 in_box sudo flatpak remote-add --system --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
 in_box sudo flatpak install --system --noninteractive -y flathub org.kde.kmines >/dev/null 2>&1
 
+# Stand-in for the wallet KWallet's PAM module creates at the first password login.
+mkdir -p "$test_home/.local/share/kwalletd"
+touch "$test_home/.local/share/kwalletd/kdewallet.kwl" "$test_home/.local/share/kwalletd/kdewallet.salt"
+
 echo "==> First run"
 in_box sudo "$setup" >"$logs/run1.log" 2>&1 || { tail -20 "$logs/run1.log"; exit 1; }
 echo "==> Second run (should change nothing), with the log seeded with 10 old runs"
@@ -92,7 +96,12 @@ check "KWin rule forces Moonfin full screen" bash -c "
     f='$test_home/.config/kwinrulesrc'
     grep -qx 'rules=bifrost-moonfin' \"\$f\" && grep -qx 'count=1' \"\$f\" &&
         sed -n '/^\[bifrost-moonfin\]/,/^\[/p' \"\$f\" | grep -qx 'fullscreenrule=2'"
-check "Bigscreen favorites written" grep -q '^storageId=bifrost-twitch.desktop$' "$test_home/.config/bigscreen-favs"
+check "audio rule prefers the TV" in_box grep -q '"output:hdmi-stereo"' \
+    /etc/wireplumber/wireplumber.conf.d/50-bifrost-tv-audio.conf
+check "login-password wallet set aside before Moonfin's first start" bash -c "
+    d='$test_home/.local/share/kwalletd'
+    [[ ! -e \$d/kdewallet.kwl ]] && compgen -G \"\$d/backup-*/kdewallet.kwl\""
+check "Bigscreen favorites written"grep -q '^storageId=bifrost-twitch.desktop$' "$test_home/.config/bigscreen-favs"
 check "web-app icons installed" in_box test -f /usr/local/share/icons/hicolor/scalable/apps/bifrost-twitch.svg \
     -a -f /usr/local/share/icons/hicolor/512x512/apps/bifrost-dropout.png
 check "update services run under systemd" in_box bash -c \
