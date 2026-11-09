@@ -1,6 +1,6 @@
 #!/usr/bin/bash
 # Quick checks for the repo: shellcheck on every script, JSON syntax, desktop files.
-# Runs in seconds; CI runs it on every push (.github/workflows/lint.yml).
+# Runs in seconds; CI runs it on every push to main and every pull request (.github/workflows/checks.yml).
 #
 # Needs jq and desktop-file-validate. Uses shellcheck if installed, else its container.
 set -euo pipefail
