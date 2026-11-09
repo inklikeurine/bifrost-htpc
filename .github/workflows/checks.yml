@@ -1,0 +1,26 @@
+name: Checks
+
+# Every push to main and every pull request: tests/lint.sh (shellcheck on
+# every script, the JSON files, the desktop launchers). The tests that need a
+# real machine (the Kinoite container test, the TV) are not here; only the
+# owner runs those (AGENTS.md).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    name: Validate and test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install desktop-file-utils
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq desktop-file-utils
+      # shellcheck and jq come with the runner image.
+      - run: tests/lint.sh
