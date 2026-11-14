@@ -79,12 +79,17 @@ Before the reinstall, copy off anything worth keeping. At minimum, the 12 custom
    for the network and password (leave it out on Ethernet or if already connected). The run ends by printing the SSH command
    (`ssh you@bifrost-bedroom.local`), the box's IPv4 addresses and its host key fingerprints; check the
    fingerprints when you first connect.
-4. Reboot. The first run staged a new OS image with Bigscreen and the RPM Fusion repositories layered on;
-   autologin into Bigscreen starts working after this reboot.
-5. Run `sudo ./setup.sh` again. Now that RPM Fusion is active, it adds the video codecs (see Video playback)
-   and asks for one more reboot.
-6. Reboot, then run `sudo ./setup.sh` once more. It should report nothing to change.
-7. Work through the per-box checklist below.
+4. Leave it to finish. The run ends with a 60-second countdown and reboots, and from there setup carries on
+   by itself (see Carrying on after a reboot):
+   - After the first reboot, autologin into Bigscreen starts working. Setup runs again in the background and
+     adds the video codecs (see Video playback), then reboots once more. If something is playing, it waits
+     for it to end, for up to 3 hours.
+   - After the second reboot, it runs once more, finds nothing left to do, and switches itself off.
+
+   To follow along over SSH: `journalctl -fu bifrost-setup-resume`. `bifrost-status` says whether setup is
+   still carrying on. Press Ctrl+C during the countdown to reboot later yourself: setup still carries on
+   after that reboot.
+5. Work through the per-box checklist below.
 
 `--user NAME` picks the autologin account if you aren't running the script with `sudo` from it. Without an
 internet connection the script stops before changing anything. `/var/log/bifrost-setup.log` keeps the last 8
@@ -103,7 +108,9 @@ sudo ./setup.sh
 ```
 
 You don't need `--room` or `--wifi` again: without `--room` the hostname stays as it is, and the Wi-Fi
-connection is saved. If the run ends by asking for a reboot, reboot.
+connection is saved. If the changes need a reboot (a new layered package, say), the run ends with the same
+60-second countdown and carries on by itself after the reboot. An OS update that's only waiting for the
+weekly reboot doesn't count: the box doesn't reboot just for that.
 
 ### What the script does
 
@@ -118,6 +125,7 @@ connection is saved. If the run ends by asking for a reboot, reboot.
 | Firefox | Writes `/etc/firefox/policies/policies.json`, which force-installs Leanback for Dropout and uBlock Origin (against Twitch ads; addons.mozilla.org keeps it updated). |
 | Moonfin | Installs the latest release's `.flatpak` bundle. |
 | Per account | Copies `wallpapers/`. Turns off screen locking, auto-suspend on AC, Baloo file indexing, Discover's notifier and the Welcome Center pop-up. Adds a KWin window rule that forces Moonfin full screen (it has no setting for this and reopens however it was last closed). Hides `config/hidden-apps.txt` from Bigscreen and writes the favorites in the order of `config/favorites.txt`; re-running resets both to those lists. Until Moonfin's first start, sets aside the wallet KWallet made at the first password login (see the checklist). Turns off Bigscreen's colored tile backgrounds and, so more of the wallpaper shows, its Recent and Games rows, each unless it's been set since (Bigscreen settings → Colored tiles, and Favorites Manager → Show Recent / Show Games, turn them back on; the row switches need Bigscreen 6.8, which comes with Fedora 45). |
+| Reboot and carry on | When the run staged a new OS image with its own changes, saves the checkout's path and the account in `/var/lib/bifrost/setup-resume`, turns on `bifrost-setup-resume.service` and reboots after a 60-second countdown. When a run has nothing left to do, it removes the file and turns the service off. |
 
 ### Timers
 
@@ -131,6 +139,25 @@ Runs missed while the box was off happen at the next boot, except the reboot.
 | `bifrost-update-dropout.timer` | Sunday, ~03:30 | Points `policies.json` at the newest Leanback for Dropout release. |
 | `bifrost-upgrade-fedora.timer` | Saturday, ~03:00 | Four weeks after a new Fedora release is out, moves the box to it (see Fedora upgrades). |
 | `bifrost-weekly-reboot.timer` | Sunday, 04:30 | Reboots, which applies the staged OS update. If something is playing (audio running, or an app keeping the screen awake), it rechecks every 30 min and reboots anyway after 3 h. |
+
+### Carrying on after a reboot
+
+Some changes only take effect after a reboot: a layered package, the RPM Fusion repositories, the video
+codecs. Rather than asking you to reboot and run the script again each time, setup does it itself:
+
+1. A run that staged a new OS image with its own changes writes `/var/lib/bifrost/setup-resume` (the
+   checkout's path and the account), turns on `bifrost-setup-resume.service`, and reboots after a 60-second
+   countdown. Ctrl+C stops the countdown: the box then carries on whenever you reboot.
+2. At the next boot the service waits for the network (up to 10 minutes, as Wi-Fi can be slow), pauses
+   Kinoite's own daily update so the two don't trip over each other, and runs `setup.sh --resumed`. It logs to
+   `journalctl -u bifrost-setup-resume` and `/var/log/bifrost-setup.log`.
+3. If that run staged another image, the service reboots with `bifrost-reboot`, which waits while something
+   is playing (for up to 3 hours), like the weekly reboot.
+4. A run with nothing left to do removes the file and turns the service off.
+
+After 5 runs without finishing, or if setup stops with an error, it stops rebooting. On an error it tries
+again at the next boot. A staged image that's only Fedora's daily update, or a Fedora upgrade, doesn't make
+setup reboot: the weekly reboot applies those.
 
 ### Fedora upgrades
 
@@ -158,6 +185,8 @@ Going back is the same as for any update (see Troubleshooting).
   `/var/log/bifrost-setup.log` for setup runs.
 - **Run an update now:** `sudo systemctl start bifrost-update-moonfin` (or `bifrost-update-dropout`,
   `bifrost-flatpak-update`). `journalctl -u bifrost-upgrade-fedora` shows when the next Fedora is due.
+- **Stop setup carrying on after reboots:** `sudo systemctl disable bifrost-setup-resume` and
+  `sudo rm /var/lib/bifrost/setup-resume`. The next `sudo ./setup.sh` turns it back on if it still needs a reboot.
 - **Show a hidden app:** delete its line in `config/hidden-apps.txt` and re-run the script.
 
 ### Hidden apps
@@ -309,6 +338,10 @@ These need real hardware; the container test can't cover them.
 - **Hardware video decode** in Firefox and Moonlight: `bifrost-status` lists H264 as hardware-decoded, and in
   Firefox `about:support` → Media → Codec Support shows H264 hardware decoding as supported. While an episode
   plays, `top` shows Firefox using little CPU.
+- **Setup carries on by itself:** on a fresh install, one `sudo ./setup.sh` reboots twice on its own and
+  ends with Bigscreen up, `bifrost-status` showing H264 hardware decoding and no "Carrying on" line, and
+  `journalctl -u bifrost-setup-resume` ending with "Setup is complete". Also check that the service runs
+  setup from the home folder with SELinux on, with no denial in `sudo ausearch -m avc -ts boot`.
 - **The weekly reboot** comes back into Bigscreen on its own, with the staged update applied.
 - **A Fedora upgrade** (for example 44 to 45) comes back into Bigscreen with the favorites, sound and
   autologin unchanged, and `sudo ./setup.sh` afterwards reports nothing to change.
@@ -333,7 +366,7 @@ tests/run-distrobox-test.sh
 
 The first command turns the ISO's OS tree into a podman image. It reads both the Fedora 45 installer (an EROFS image, mounted read-only in a container through FUSE) and the older Fedora 44 `ostree` ISO. Keep ISOs in `_resources/`, which git ignores. The second creates a distrobox with its own home directory (your real `~/.config` is never touched), runs the script twice, checks the second run changes nothing, then checks the results, including launching the Dropout web app in headless Firefox and confirming both extensions install.
 
-A container can't test rpm-ostree layering (so not the video codecs either; it checks the step is skipped cleanly), the hostname, `--wifi`, starting `sshd` (the box shares the host's network), or anything that needs a screen. Last run with Kinoite 45.1.4 on 2026-11-14: all 48 checks passed.
+A container can't test rpm-ostree layering (so not the video codecs either; it checks the step is skipped cleanly), the hostname, `--wifi`, starting `sshd` (the box shares the host's network), or anything that needs a screen. Last run with Kinoite 45.1.4 on 2026-11-14: all 52 checks passed.
 
 ## Sources
 

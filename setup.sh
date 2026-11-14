@@ -9,6 +9,9 @@
 #   --room NAME  set the hostname to bifrost-NAME, e.g. --room bedroom
 #   --wifi       ask for a Wi-Fi network and its password, and connect to it
 #
+# When a run stages a new OS image, the box reboots by itself (after a 60 s countdown
+# that Ctrl+C stops), and bifrost-setup-resume runs this script again after each reboot
+# until nothing is left to do. Follow it with: journalctl -fu bifrost-setup-resume
 # /var/log/bifrost-setup.log keeps the last 8 runs: each run's exit code, warnings and errors.
 set -euo pipefail
 
@@ -16,15 +19,19 @@ repo=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 user=${SUDO_USER:-}
 room=""
 wifi=false
+# --resumed: run by bifrost-setup-resume after a reboot. No countdown: that service
+# does the reboot, waiting while something is playing.
+resumed=false
 args=$*
 
-usage() { sed -n '2,13s/^# \{0,1\}//p' "${BASH_SOURCE[0]}"; }
+usage() { sed -n '2,16s/^# \{0,1\}//p' "${BASH_SOURCE[0]}"; }
 
 while (($#)); do
     case $1 in
         --user) user=${2:?--user needs a name}; shift 2 ;;
         --room) room=${2:?--room needs a name}; shift 2 ;;
         --wifi) wifi=true; shift ;;
+        --resumed) resumed=true; shift ;;
         -h | --help) usage; exit 0 ;;
         *) echo "Unknown option: $1" >&2; usage >&2; exit 2 ;;
     esac
@@ -105,7 +112,10 @@ finish() {
         awk -v skip=$((runs - 8)) '/^===== /{n++} n>skip' "$setup_log" >"$tmp" && cat "$tmp" >"$setup_log"
     fi
     rm -f "$tmp" "$notes"
+    # Only after the log is written, and only after a run that went through.
+    if $reboot_now && ((code == 0)); then systemctl reboot; fi
 }
+reboot_now=false
 trap finish EXIT
 # A command that stops the script (set -e) gets logged with its line number.
 trap 'error "line $LINENO: \"$BASH_COMMAND\" failed (exit $?)"' ERR
@@ -128,6 +138,11 @@ booted=false
 systemd_up=false
 [[ -d /run/systemd/system ]] && systemd_up=true
 reboot_needed=false
+# jq: true if the newest deployment is staged and requests packages or removals that the
+# booted one doesn't.
+# shellcheck disable=SC2016 # $d is jq's, not the shell's
+staged_changes='def req: [.["requested-packages"], .["requested-local-packages"], .["requested-base-removals"]] | map(. // [] | sort);
+    .deployments as $d | ($d[0].booted | not) and ($d[0] | req) != ($d[] | select(.booted) | req)'
 
 # ---------------------------------------------------------------------------
 if $wifi; then
@@ -186,7 +201,10 @@ else
     else
         note "already requested: ${packages[*]}"
     fi
-    if rpm-ostree status --json | jq -e '.deployments[0].booted | not' >/dev/null; then
+    # A staged image with packages the running one lacks (from an earlier run) needs a
+    # reboot. One that differs only by a newer Fedora (the daily update, or a Fedora
+    # upgrade) doesn't: the weekly reboot applies it.
+    if rpm-ostree status --json | jq -e "$staged_changes" >/dev/null; then
         reboot_needed=true
     fi
 fi
@@ -680,11 +698,27 @@ for key in /etc/ssh/ssh_host_*_key.pub; do
 done
 
 printf '\n==> Done\n'
+# Carrying on after a reboot: bifrost-setup-resume.service runs at the next boot while
+# /var/lib/bifrost/setup-resume says where this checkout is and which account to set up.
+resume_file=/var/lib/bifrost/setup-resume
 if $reboot_needed; then
-    note "Reboot to finish: a new OS image with the layered packages is staged."
-    if $video_waiting; then
-        note "After the reboot, run this script again: it adds the video codecs, then asks for one more reboot."
+    install -d -m 0755 /var/lib/bifrost
+    printf 'repo=%s\nuser=%s\n' "$repo" "$user" >"$resume_file"
+    systemctl enable --quiet bifrost-setup-resume.service
+    note "A new OS image is staged. After the reboot, setup runs again by itself until nothing is left to do."
+    $video_waiting && note "The next run adds the video codecs, which needs one more reboot."
+    note "Follow it over SSH with: journalctl -fu bifrost-setup-resume"
+    if $resumed; then
+        note "Rebooting (bifrost-setup-resume waits while something is playing)."
     else
-        note "After the reboot, run this script once more to check everything."
+        note "Rebooting in 60 s. Press Ctrl+C to reboot later yourself; setup still carries on after that reboot."
+        trap 'printf "\n"; note "Not rebooting now. Reboot when ready: setup carries on by itself."; exit 0' INT
+        sleep 60
+        trap - INT
+        reboot_now=true
     fi
+elif [[ -e $resume_file ]] || systemctl is-enabled --quiet bifrost-setup-resume.service 2>/dev/null; then
+    rm -f "$resume_file" /var/lib/bifrost/setup-resume-runs
+    systemctl disable --quiet bifrost-setup-resume.service 2>/dev/null || true
+    note "Setup is complete: nothing left to do after a reboot."
 fi
