@@ -13,6 +13,21 @@ else
     echo "not a booted Kinoite system"
 fi
 
+section "Video"
+if rpm -q ffmpeg >/dev/null 2>&1; then
+    echo "FFmpeg: RPM Fusion's full one (plays H.264)"
+else
+    echo "FFmpeg: Fedora's (no H.264: Dropout and Twitch won't play)"
+fi
+if command -v vainfo >/dev/null; then
+    va=$(vainfo --display drm 2>/dev/null)
+    echo "Video driver: $(sed -n 's/.*Driver version: //p' <<<"$va" | head -n1 | grep . || echo none)"
+    for codec in H264 HEVC VP9 AV1; do
+        grep -q "VAProfile$codec.*VAEntrypointVLD" <<<"$va" && hw=yes || hw=no
+        printf 'Hardware decoding %-5s %s\n' "$codec:" "$hw"
+    done
+fi
+
 section "Timers"
 for t in rpm-ostreed-automatic bifrost-flatpak-update bifrost-update-moonfin bifrost-update-dropout bifrost-upgrade-fedora bifrost-weekly-reboot; do
     next=$(systemctl show -p NextElapseUSecRealtime --value "$t.timer" 2>/dev/null)

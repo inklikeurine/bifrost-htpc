@@ -45,7 +45,7 @@ Before the reinstall, copy off anything worth keeping. At minimum, the 12 custom
 **Fedora Kinoite (the image-based version of Fedora KDE) + Plasma Bigscreen.**
 
 - **Safe automatic updates:** Kinoite installs updates as a whole new system image in the background and switches to it on the next reboot. If an update breaks something, you pick the previous version from the boot menu. A bad update can't leave the box half-updated.
-- **Layered packages:** Bigscreen isn't a Flatpak, so it's added to Kinoite as a "layered" package with one command. If Fedora's repos are briefly out of step, a layered package can hold up an update. The box keeps running the current version until it clears; it doesn't break. Keep the list of layered packages as short as possible.
+- **Layered packages:** Bigscreen isn't a Flatpak, so it's added to Kinoite as a "layered" package with one command. If Fedora's repos are briefly out of step, a layered package can hold up an update. The box keeps running the current version until it clears; it doesn't break. Keep the list of layered packages as short as possible. The video codecs add a few more, from RPM Fusion (see Video playback).
 
 ## Setup method
 
@@ -72,17 +72,19 @@ Before the reinstall, copy off anything worth keeping. At minimum, the 12 custom
    sudo ./setup.sh --room bedroom --wifi
    ```
 
-   Steps are numbered (`[3/9] System files`), and downloads show progress bars. The first run also downloads
+   Steps are numbered (`[4/10] System files`), and downloads show progress bars. The first run also downloads
    the newest Fedora image with Bigscreen layered on, which can take a while.
 
    `--room bedroom` sets the hostname to `bifrost-bedroom` (letters, digits and dashes only). `--wifi` asks
    for the network and password (leave it out on Ethernet or if already connected). The run ends by printing the SSH command
    (`ssh you@bifrost-bedroom.local`), the box's IPv4 addresses and its host key fingerprints; check the
    fingerprints when you first connect.
-4. Reboot. The first run staged a new OS image with Bigscreen layered on; autologin into Bigscreen starts
-   working after this reboot.
-5. Run `sudo ./setup.sh` again. It should report nothing to change.
-6. Work through the per-box checklist below.
+4. Reboot. The first run staged a new OS image with Bigscreen and the RPM Fusion repositories layered on;
+   autologin into Bigscreen starts working after this reboot.
+5. Run `sudo ./setup.sh` again. Now that RPM Fusion is active, it adds the video codecs (see Video playback)
+   and asks for one more reboot.
+6. Reboot, then run `sudo ./setup.sh` once more. It should report nothing to change.
+7. Work through the per-box checklist below.
 
 `--user NAME` picks the autologin account if you aren't running the script with `sudo` from it. Without an
 internet connection the script stops before changing anything. `/var/log/bifrost-setup.log` keeps the last 8
@@ -108,6 +110,7 @@ connection is saved. If the run ends by asking for a reboot, reboot.
 | Step | Details |
 |---|---|
 | Layered packages | `rpm-ostree upgrade --install=…` for each package in `config/layered-packages.txt` not already requested. `upgrade --install` layers onto the newest Fedora image: Bigscreen 6.7.5 (Fedora updates) needs a newer Plasma than the 44.1.7 ISO's 6.6.4, so layering onto the ISO's image would fail or pick an old Bigscreen snapshot. |
+| Video playback | Adds the RPM Fusion repositories, then replaces Fedora's FFmpeg with RPM Fusion's full one and adds the video driver for the box's graphics chip, so H.264 plays (see Video playback). Each part needs a reboot before the next. |
 | Flatpaks | Adds Flathub, installs `config/flatpaks.txt` system-wide, and removes the installer's Fedora Flatpaks listed in `config/flatpaks-remove.txt`. |
 | System files | Copies `files/usr/local/…` (helper scripts, Twitch and Dropout launchers and their icons, Firefox prefs and policy template) `files/etc/systemd/system/…` (timers) and `files/etc/wireplumber/…` (sound to the TV, see Sound). Writes the autologin file for your account. |
 | Updates | Sets `AutomaticUpdatePolicy=stage` in `/etc/rpm-ostreed.conf` and turns on the timers below, including the move to each new Fedora release (see Fedora upgrades). |
@@ -190,6 +193,53 @@ The TV's output only counts as present while the screen is on: when Plasma turns
 Check with `wpctl status` (the TV's sink is `…hdmi-stereo`) or `cat /proc/asound/card0/eld*` (the TV's
 name, with `eld_valid 1`).
 
+## Video playback
+
+Dropout and Twitch stream H.264 video with AAC sound. Fedora leaves H.264 out of everything it ships, for
+patent reasons:
+
+- **FFmpeg**, which Firefox uses to decode video: Fedora's `ffmpeg-free` hands H.264 to OpenH264, and Kinoite
+  ships `noopenh264`, an empty stand-in. Firefox still sees an H.264 decoder listed, accepts the video, and only
+  fails when it starts playing ("This video can't play here." in Leanback for Dropout).
+- **The video drivers** that let the GPU do the decoding: Fedora's Intel driver (`libva-intel-media-driver`)
+  decodes VP9 and AV1 but not H.264 or HEVC, and Fedora's Mesa does the same on AMD.
+
+The script adds both from [RPM Fusion](https://rpmfusion.org), the usual source for these on Fedora:
+
+1. **The RPM Fusion repositories.** The release packages are installed from RPM Fusion's site, which takes
+   effect after a reboot. The next run swaps them for the repository's own copies, so they get updates and
+   follow Fedora upgrades. That's RPM Fusion's own method for rpm-ostree. "Free" always; "nonfree" only on
+   Intel graphics from 2014 on, whose driver lives there.
+2. **Full FFmpeg** (`ffmpeg`) in place of every `ffmpeg-free` and `lib…-free` package installed, read from
+   the box rather than a fixed list. This alone makes H.264 play, with the CPU decoding: any HTPC-class CPU
+   handles 1080p.
+3. **A video driver for the graphics chip**, so the GPU decodes instead. That uses less power and runs cooler
+   and quieter. The script reads the chip's PCI IDs from `/sys/class/drm` and picks:
+
+   | Graphics | Driver | Repository |
+   |---|---|---|
+   | Intel, Broadwell (2014) and newer | `intel-media-driver`, installed beside Fedora's | nonfree |
+   | Intel, older | `libva-intel-driver` | free |
+   | AMD | `mesa-va-drivers-freeworld`, installed beside Fedora's Mesa | free |
+   | NVIDIA | none: decoding stays on the CPU. Hardware decoding would need NVIDIA's own driver, a much bigger change | |
+   | anything else (a virtual machine, say) | none: decoding stays on the CPU | |
+
+   The FFmpeg swap and the driver go into one new OS image.
+
+On a fresh install this adds one reboot-and-run (see Setting up a box). `bifrost-status` shows which FFmpeg is
+installed and which formats the GPU decodes. In Firefox, `about:support` → Media → Codec Support should show H264
+as supported, and hardware decoding as supported where there's a driver.
+
+**The cost:** three or four more layered packages (two on NVIDIA) and one override. RPM Fusion builds against Fedora's packages,
+so when Fedora updates Mesa (say) a day or two before RPM Fusion rebuilds `mesa-va-drivers-freeworld`, the
+daily OS update fails until it catches up. The box keeps running the current version meanwhile. A Fedora
+upgrade needs RPM Fusion's packages for the new release, which are normally out well before the four-week wait
+ends. Moonlight, VacuumTube and the other Flatpaks bring their own codecs and aren't affected.
+
+**Not chosen:** running the web apps on the Flathub Firefox, which bundles full FFmpeg and needs no
+layering. It would move the extension policy (`policies.json`) and the web-app profiles into Flatpak's
+sandbox paths.
+
 ## App plan
 
 | Service | Client | Notes |
@@ -201,7 +251,7 @@ name, with `eld_valid 1`).
 | Twitch | twitch.tv in Firefox, full screen, with uBlock Origin | Maybe develop a simple Leanback UI later |
 | Dropout | dropout.tv in Firefox, full screen, with your extension | The extension supplies the 10-foot UI |
 
-**The "web apps":** each is a launcher that opens Firefox in kiosk mode (full screen, no toolbars) with its own profile: `bifrost-webapp twitch https://www.twitch.tv` runs `firefox --kiosk --no-remote --class bifrost-twitch --profile ~/.local/share/bifrost/firefox/twitch https://www.twitch.tv`. The profile is created on first launch, and `firefox-user.js` is copied into it on every launch: no first-run pages, no restore-session prompt after the weekly reboot, autoplay on, notification prompts off, no offer to save passwords (its prompt can't be closed with the remote). Both show up as normal tiles in Bigscreen with their own icons, and `--class` makes the open window use the launcher's icon too. The icons are in `files/usr/local/share/icons/hicolor/`: Dropout's comes from dropout.tv's web-app manifest, and Twitch's is the [Simple Icons](https://simpleicons.org) glitch logo on a purple circle. Kinoite's Firefox plays H.264, VP9 and AV1 out of the box, so Twitch needs no extra codec packages.
+**The "web apps":** each is a launcher that opens Firefox in kiosk mode (full screen, no toolbars) with its own profile: `bifrost-webapp twitch https://www.twitch.tv` runs `firefox --kiosk --no-remote --class bifrost-twitch --profile ~/.local/share/bifrost/firefox/twitch https://www.twitch.tv`. The profile is created on first launch, and `firefox-user.js` is copied into it on every launch: no first-run pages, no restore-session prompt after the weekly reboot, autoplay on, notification prompts off, no offer to save passwords (its prompt can't be closed with the remote). Both show up as normal tiles in Bigscreen with their own icons, and `--class` makes the open window use the launcher's icon too. The icons are in `files/usr/local/share/icons/hicolor/`: Dropout's comes from dropout.tv's web-app manifest, and Twitch's is the [Simple Icons](https://simpleicons.org) glitch logo on a purple circle. Kinoite's Firefox plays VP9 and AV1 out of the box, but not H.264, which Dropout and Twitch both stream: setup adds it (see Video playback).
 
 ### Moonfin: Flatpak bundle
 
@@ -254,7 +304,11 @@ These need real hardware; the container test can't cover them.
 - **First boot into Bigscreen:** autologin, the favorites row and the wallpapers picker.
 - **KWallet:** the wallet dialog matches the checklist, and a blank password really means no prompt after a reboot.
 - **Sound on the TV** after a reboot and after the screen wakes (see Sound).
-- **Hardware video decode** in Firefox and Moonlight (Intel VA-API; `libva-intel-media-driver` ships with Kinoite).
+- **Video plays in the web apps:** a Dropout episode plays from the Dropout tile with no "This video can't play
+  here." box, and a Twitch stream plays.
+- **Hardware video decode** in Firefox and Moonlight: `bifrost-status` lists H264 as hardware-decoded, and in
+  Firefox `about:support` → Media → Codec Support shows H264 hardware decoding as supported. While an episode
+  plays, `top` shows Firefox using little CPU.
 - **The weekly reboot** comes back into Bigscreen on its own, with the staged update applied.
 - **A Fedora upgrade** (for example 44 to 45) comes back into Bigscreen with the favorites, sound and
   autologin unchanged, and `sudo ./setup.sh` afterwards reports nothing to change.
@@ -279,10 +333,12 @@ tests/run-distrobox-test.sh
 
 The first command turns the ISO's OS tree into a podman image. It reads both the Fedora 45 installer (an EROFS image, mounted read-only in a container through FUSE) and the older Fedora 44 `ostree` ISO. Keep ISOs in `_resources/`, which git ignores. The second creates a distrobox with its own home directory (your real `~/.config` is never touched), runs the script twice, checks the second run changes nothing, then checks the results, including launching the Dropout web app in headless Firefox and confirming both extensions install.
 
-A container can't test rpm-ostree layering, the hostname, `--wifi`, starting `sshd` (the box shares the host's network), or anything that needs a screen. Last run with Kinoite 45.1.4 on 2026-11-14, together with the fixes open then: all 46 checks passed.
+A container can't test rpm-ostree layering (so not the video codecs either; it checks the step is skipped cleanly), the hostname, `--wifi`, starting `sshd` (the box shares the host's network), or anything that needs a screen. Last run with Kinoite 45.1.4 on 2026-11-14: all 48 checks passed.
 
 ## Sources
 
+- RPM Fusion on rpm-ostree (installing, then switching to the repository's release packages): https://rpmfusion.org/Configuration
+- RPM Fusion hardware-accelerated video drivers: https://rpmfusion.org/Howto/Multimedia
 - Getting Plasma Bigscreen (Fedora package): https://plasma-bigscreen.org/get/
 - Plasma Bigscreen source (favorites, app blacklist, session): https://invent.kde.org/plasma/plasma-bigscreen
 - Kinoite unattended updates: https://fedoraproject.org/wiki/Changes/KDEKinoiteAutoUpdateByDefault

@@ -66,6 +66,9 @@ done
 check "Fedora Flatpak stand-in removed" bash -c "! distrobox enter $box -- flatpak info --system org.kde.kmines"
 check "autologin into Bigscreen" in_box grep -qx 'Session=plasma-bigscreen-wayland.desktop' /etc/plasmalogin.conf.d/50-bifrost-autologin.conf
 check "rpm-ostree stages updates" in_box grep -qx 'AutomaticUpdatePolicy=stage' /etc/rpm-ostreed.conf
+check "video codecs skipped cleanly outside a booted Kinoite" bash -c \
+    "grep -q 'skipping the video codecs' '$logs/run2.log' && ! grep -qi 'rpmfusion\|override' '$logs/run2.log'"
+check "bifrost-status reports the video codecs" in_box bash -c "/usr/local/bin/bifrost-status | grep -q '^FFmpeg: '"
 for timer in bifrost-flatpak-update bifrost-update-moonfin bifrost-update-dropout bifrost-upgrade-fedora bifrost-weekly-reboot rpm-ostreed-automatic; do
     check "$timer.timer enabled" in_box systemctl is-enabled "$timer.timer"
 done
