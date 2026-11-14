@@ -125,6 +125,8 @@ check "Leanback for Dropout installed and active in the web-app profile" jq -e \
 check "uBlock Origin installed and active in the web-app profile" jq -e \
     '[.addons[] | select(.id == "uBlock0@raymondhill.net" and .active)] | length == 1' \
     "$test_home/.local/share/bifrost/firefox/dropout/extensions.json"
+check "web-app profile doesn't offer to save passwords" grep -qxF 'user_pref("signon.rememberSignons", false);' \
+    "$test_home/.local/share/bifrost/firefox/dropout/user.js"
 
 echo
 if ((fail)); then
