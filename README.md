@@ -258,7 +258,7 @@ tests/run-distrobox-test.sh
 
 The first command turns the ISO's OS tree into a podman image. It reads both the Fedora 45 installer (an EROFS image, mounted read-only in a container through FUSE) and the older Fedora 44 `ostree` ISO. Keep ISOs in `_resources/`, which git ignores. The second creates a distrobox with its own home directory (your real `~/.config` is never touched), runs the script twice, checks the second run changes nothing, then checks the results, including launching the Dropout web app in headless Firefox and confirming both extensions install.
 
-A container can't test rpm-ostree layering, the hostname, `--wifi`, starting `sshd` (the box shares the host's network), or anything that needs a screen. Last run with Kinoite 44.1.7 on 2026-10-19: all 37 checks passed.
+A container can't test rpm-ostree layering, the hostname, `--wifi`, starting `sshd` (the box shares the host's network), or anything that needs a screen. Last run with Kinoite 45.1.4 on 2026-11-14, together with the fixes open then: all 46 checks passed.
 
 ## Sources
 
