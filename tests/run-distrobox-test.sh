@@ -82,6 +82,10 @@ check "hidden apps include every ID in config/hidden-apps.txt" bash -c "
     done"
 check "Welcome Center pop-up off" grep -qx 'ShowUpdatePage=false' "$test_home/.config/plasma-welcomerc"
 check "Baloo indexing off" grep -qx 'Indexing-Enabled=false' "$test_home/.config/baloofilerc"
+check "Bigscreen's colored tiles, Recent and Games rows off" bash -c "
+    for key in coloredTiles showRecent showGames; do
+        grep -qx \"\$key=false\" '$test_home/.config/plasmashellrc' || exit 1
+    done"
 check "Discover notifier off" grep -qx 'Hidden=true' "$test_home/.config/autostart/org.kde.discover.notifier.desktop"
 check "SSH summary with host key fingerprints" grep -q 'SHA256:' "$logs/run1.log"
 check "setup log ends with this run's exit code" in_box bash -c \

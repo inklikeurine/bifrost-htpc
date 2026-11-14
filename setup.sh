@@ -508,20 +508,30 @@ for account in "${accounts[@]}"; do
         note "moved the login-password wallet to $backup; Moonfin creates a new one"
     fi
 
-    # Plain tile backgrounds rather than ones colored from each app's icon. Only while
-    # unset, so turning them back on in Bigscreen's settings sticks. The home screen
-    # keeps its settings in plasmashellrc under [Applets][<its ID>] (1 on a new
-    # install): Bigscreen's settings page reads [General], the home screen
-    # [Configuration][General].
+    # Home screen switches, each turned off only while unset, so turning one back on
+    # in Bigscreen sticks:
+    #   coloredTiles  plain tile backgrounds rather than ones colored from each app's
+    #                 icon (Bigscreen settings → Colored tiles)
+    #   showRecent,   no Recent or Games rows, so more of the wallpaper shows
+    #   showGames     (Bigscreen 6.8 and later: Favorites Manager → Show Recent/Games)
+    # The home screen keeps its settings in plasmashellrc under [Applets][<its ID>]
+    # (1 on a new install): Bigscreen's settings pages write [General], the home
+    # screen reads [Configuration][General].
     home_id=$(awk -F= '/^\[/ { id = ($0 ~ /^\[Applets\]\[[0-9]+\]$/) ? $0 : "" }
         id != "" && $0 == "plugin=org.kde.bigscreen.homescreen" { gsub(/[^0-9]/, "", id); print id; exit }' \
         "$acct_home/.config/plasmashellrc" 2>/dev/null)
     home_id=${home_id:-1}
-    if [[ -z $(as_user kreadconfig6 --file plasmashellrc --group Applets --group "$home_id" --group General --key coloredTiles) ]]; then
-        as_user kwriteconfig6 --file plasmashellrc --group Applets --group "$home_id" --group General --key coloredTiles false
-        as_user kwriteconfig6 --file plasmashellrc --group Applets --group "$home_id" --group Configuration --group General --key coloredTiles false
-        note "Bigscreen tiles without colored backgrounds"
-    fi
+    for key in coloredTiles showRecent showGames; do
+        if [[ -z $(as_user kreadconfig6 --file plasmashellrc --group Applets --group "$home_id" --group General --key "$key") ]]; then
+            as_user kwriteconfig6 --file plasmashellrc --group Applets --group "$home_id" --group General --key "$key" false
+            as_user kwriteconfig6 --file plasmashellrc --group Applets --group "$home_id" --group Configuration --group General --key "$key" false
+            case $key in
+                coloredTiles) note "Bigscreen tiles without colored backgrounds" ;;
+                showRecent) note "Bigscreen's Recent row off" ;;
+                showGames) note "Bigscreen's Games row off" ;;
+            esac
+        fi
+    done
 
     # Bigscreen favorites, in the order of config/favorites.txt.
     as_user mkdir -p "$acct_home/.config"
