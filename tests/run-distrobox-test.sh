@@ -163,7 +163,7 @@ resume_says() {
         printf 'repo=/tmp\nuser=$USER\n' >/tmp/bifrost-resume-test/setup-resume &&
         { [[ $2 == 0 ]] || echo $2 >/tmp/bifrost-resume-test/setup-resume-runs; } &&
         FAKE_MODE=$1 BIFROST_STATE_DIR=/tmp/bifrost-resume-test BIFROST_SETUP_CMD=/tmp/fake-setup.sh \
-        BIFROST_RESUME_REBOOT_CMD='echo REBOOT' /usr/local/bin/bifrost-setup-resume") || true
+        BIFROST_RESUME_REBOOT_CMD='echo REBOOT' /usr/local/bin/bifrost-setup-resume 2>&1") || true
     grep -qE "$3" <<<"$out" || return 1
     [[ $3 == *REBOOT* ]] || ! grep -q REBOOT <<<"$out"
 }
