@@ -69,7 +69,7 @@ check "rpm-ostree stages updates" in_box grep -qx 'AutomaticUpdatePolicy=stage' 
 for timer in bifrost-flatpak-update bifrost-update-moonfin bifrost-update-dropout bifrost-weekly-reboot rpm-ostreed-automatic; do
     check "$timer.timer enabled" in_box systemctl is-enabled "$timer.timer"
 done
-check "sshd password login off" in_box bash -c "sudo sshd -T | grep -qx 'passwordauthentication no'"
+check "sshd password login off" in_box bash -c "sudo sshd -T | grep -qix 'passwordauthentication no'"
 check "policies.json force-installs the extension" in_box jq -e \
     '.policies.ExtensionSettings["leanback-for-dropout@inklikeurine.dev"].installation_mode == "force_installed"' \
     /etc/firefox/policies/policies.json
@@ -101,7 +101,7 @@ check "audio rule prefers the TV" in_box grep -q '"output:hdmi-stereo"' \
 check "login-password wallet set aside before Moonfin's first start" bash -c "
     d='$test_home/.local/share/kwalletd'
     [[ ! -e \$d/kdewallet.kwl ]] && compgen -G \"\$d/backup-*/kdewallet.kwl\""
-check "Bigscreen favorites written"grep -q '^storageId=bifrost-twitch.desktop$' "$test_home/.config/bigscreen-favs"
+check "Bigscreen favorites written" grep -q '^storageId=bifrost-twitch.desktop$' "$test_home/.config/bigscreen-favs"
 check "web-app icons installed" in_box test -f /usr/local/share/icons/hicolor/scalable/apps/bifrost-twitch.svg \
     -a -f /usr/local/share/icons/hicolor/512x512/apps/bifrost-dropout.png
 check "update services run under systemd" in_box bash -c \
