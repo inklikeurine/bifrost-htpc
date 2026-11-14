@@ -110,7 +110,7 @@ connection is saved. If the run ends by asking for a reboot, reboot.
 | Layered packages | `rpm-ostree upgrade --install=…` for each package in `config/layered-packages.txt` not already requested. `upgrade --install` layers onto the newest Fedora image: Bigscreen 6.7.5 (Fedora updates) needs a newer Plasma than the 44.1.7 ISO's 6.6.4, so layering onto the ISO's image would fail or pick an old Bigscreen snapshot. |
 | Flatpaks | Adds Flathub, installs `config/flatpaks.txt` system-wide, and removes the installer's Fedora Flatpaks listed in `config/flatpaks-remove.txt`. |
 | System files | Copies `files/usr/local/…` (helper scripts, Twitch and Dropout launchers and their icons, Firefox prefs and policy template) `files/etc/systemd/system/…` (timers) and `files/etc/wireplumber/…` (sound to the TV, see Sound). Writes the autologin file for your account. |
-| Updates | Sets `AutomaticUpdatePolicy=stage` in `/etc/rpm-ostreed.conf` and turns on the timers below. |
+| Updates | Sets `AutomaticUpdatePolicy=stage` in `/etc/rpm-ostreed.conf` and turns on the timers below, including the move to each new Fedora release (see Fedora upgrades). |
 | SSH | Adds `config/authorized_keys` to your `~/.ssh/authorized_keys` and turns on `sshd`. Password login goes off only once a key is in place (relabelled for SELinux) and `sshd -t` accepts the new config. Kinoite's firewall already allows SSH, and avahi makes `<hostname>.local` work on the LAN. |
 | Firefox | Writes `/etc/firefox/policies/policies.json`, which force-installs Leanback for Dropout and uBlock Origin (against Twitch ads; addons.mozilla.org keeps it updated). |
 | Moonfin | Installs the latest release's `.flatpak` bundle. |
@@ -126,7 +126,26 @@ Runs missed while the box was off happen at the next boot, except the reboot.
 | `bifrost-flatpak-update.timer` | daily, ~03:00 | `flatpak update`, then removes unused runtimes. |
 | `bifrost-update-moonfin.timer` | Sunday, ~03:30 | Installs a newer Moonfin release if there is one. |
 | `bifrost-update-dropout.timer` | Sunday, ~03:30 | Points `policies.json` at the newest Leanback for Dropout release. |
+| `bifrost-upgrade-fedora.timer` | Saturday, ~03:00 | Four weeks after a new Fedora release is out, moves the box to it (see Fedora upgrades). |
 | `bifrost-weekly-reboot.timer` | Sunday, 04:30 | Reboots, which applies the staged OS update. If something is playing (audio running, or an app keeping the screen awake), it rechecks every 30 min and reboots anyway after 3 h. |
+
+### Fedora upgrades
+
+The daily OS updates stay within one Fedora release (44, say). Moving to the next one is a
+separate step, a "rebase", which `bifrost-upgrade-fedora` does every Saturday once it's due:
+
+1. It asks Fedora's update service (Bodhi) whether the next release is out. Betas don't count.
+2. It notes the day it first saw that (in `/var/lib/bifrost/fedora-<release>-released`) and waits
+   28 days, so early problems, and a Bigscreen package that lags behind, get fixed first.
+3. It runs `rpm-ostree rebase` to the next release, which keeps Bigscreen layered. That only stages
+   the new release; the Sunday reboot starts it. If the rebase fails, nothing changes and it tries
+   again the next Saturday.
+
+It moves one release at a time. To move sooner, run the rebase by hand:
+`sudo rpm-ostree rebase fedora:fedora/<release>/x86_64/kinoite`, then reboot. A box installed from a
+container image instead (`rpm-ostree status` shows `quay.io/fedora/fedora-kinoite:<release>`) uses
+`sudo rpm-ostree rebase ostree-image-signed:docker://quay.io/fedora/fedora-kinoite:<release>`.
+Going back is the same as for any update (see Troubleshooting).
 
 ### Troubleshooting
 
@@ -135,7 +154,7 @@ Runs missed while the box was off happen at the next boot, except the reboot.
 - **See what happened:** `bifrost-status` for the summary, `journalctl -u 'bifrost-*'` for the timers,
   `/var/log/bifrost-setup.log` for setup runs.
 - **Run an update now:** `sudo systemctl start bifrost-update-moonfin` (or `bifrost-update-dropout`,
-  `bifrost-flatpak-update`).
+  `bifrost-flatpak-update`). `journalctl -u bifrost-upgrade-fedora` shows when the next Fedora is due.
 - **Show a hidden app:** delete its line in `config/hidden-apps.txt` and re-run the script.
 
 ### Hidden apps
@@ -237,6 +256,8 @@ These need real hardware; the container test can't cover them.
 - **Sound on the TV** after a reboot and after the screen wakes (see Sound).
 - **Hardware video decode** in Firefox and Moonlight (Intel VA-API; `libva-intel-media-driver` ships with Kinoite).
 - **The weekly reboot** comes back into Bigscreen on its own, with the staged update applied.
+- **A Fedora upgrade** (for example 44 to 45) comes back into Bigscreen with the favorites, sound and
+  autologin unchanged, and `sudo ./setup.sh` afterwards reports nothing to change.
 - **Hidden apps and Welcome Center:** the home screen shows only the favorites plus System Settings, Konsole and Discover, and Welcome Center doesn't appear.
 - **`--wifi`** connects, and the connection comes back after a reboot.
 - **uBlock Origin** doesn't break Twitch playback.

@@ -1,0 +1,8 @@
+[Unit]
+Description=Move to the next Fedora release four weeks after it is out (bifrost-htpc)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/bifrost-upgrade-fedora

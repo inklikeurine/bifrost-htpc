@@ -14,7 +14,7 @@ else
 fi
 
 section "Timers"
-for t in rpm-ostreed-automatic bifrost-flatpak-update bifrost-update-moonfin bifrost-update-dropout bifrost-weekly-reboot; do
+for t in rpm-ostreed-automatic bifrost-flatpak-update bifrost-update-moonfin bifrost-update-dropout bifrost-upgrade-fedora bifrost-weekly-reboot; do
     next=$(systemctl show -p NextElapseUSecRealtime --value "$t.timer" 2>/dev/null)
     result=$(systemctl show -p Result --value "$t.service" 2>/dev/null)
     last=$(systemctl show -p ExecMainExitTimestamp --value "$t.service" 2>/dev/null)
