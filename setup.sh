@@ -258,6 +258,7 @@ timers=(
     bifrost-flatpak-update.timer
     bifrost-update-moonfin.timer
     bifrost-update-dropout.timer
+    bifrost-upgrade-fedora.timer
     bifrost-weekly-reboot.timer
 )
 $systemd_up && systemctl daemon-reload

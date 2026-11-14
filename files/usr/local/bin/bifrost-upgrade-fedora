@@ -1,0 +1,74 @@
+#!/usr/bin/bash
+# Move this box to the next Fedora release once it has been out for four weeks.
+#
+# rpm-ostree's daily updates stay within one Fedora release; moving to the next one
+# is a separate "rebase". This asks Fedora's update service (Bodhi) whether the next
+# release is out, notes the day it first saw that, and rebases 28 days later, so
+# early problems (and a lagging Bigscreen package) have time to be fixed. Layered
+# packages carry over. The rebase only stages the new release: the Sunday reboot
+# starts it, and the boot menu or `rpm-ostree rollback` goes back. If the rebase
+# fails, nothing changes and the next weekly run tries again.
+set -euo pipefail
+
+# Overridable for tests.
+wait_days=${BIFROST_FEDORA_WAIT_DAYS:-28}
+state_dir=${BIFROST_STATE_DIR:-/var/lib/bifrost}
+rebase_cmd=${BIFROST_REBASE_CMD:-rpm-ostree rebase}
+
+# The newest deployment: the staged one if there is one, else the booted one. So a
+# release that's already staged isn't staged again.
+if [[ -n ${BIFROST_OS_ORIGIN:-} ]]; then
+    origin=$BIFROST_OS_ORIGIN
+else
+    origin=$(rpm-ostree status --json |
+        jq -r '.deployments[0] | .["container-image-reference"] // .origin // empty')
+fi
+
+# Two kinds of origin: an ostree branch (fedora:fedora/44/x86_64/kinoite, from the
+# ISO) or a container image (ostree-image-signed:docker://quay.io/fedora/fedora-kinoite:44).
+if [[ $origin =~ ^([^:]+:fedora/)([0-9]+)(/.+)$ ]]; then
+    current=${BASH_REMATCH[2]}
+    next=$((current + 1))
+    target=${BASH_REMATCH[1]}$next${BASH_REMATCH[3]}
+elif [[ $origin =~ ^(.+/fedora-[a-z]+:)([0-9]+)$ ]]; then
+    current=${BASH_REMATCH[2]}
+    next=$((current + 1))
+    target=${BASH_REMATCH[1]}$next
+else
+    echo "Don't know how to upgrade from '$origin'; upgrade by hand (see the README)."
+    exit 0
+fi
+
+reply=$(mktemp)
+trap 'rm -f "$reply"' EXIT
+code=$(curl -sS --max-time 60 -o "$reply" -w '%{http_code}' "https://bodhi.fedoraproject.org/releases/F$next") || code=000
+case $code in
+    200) release_state=$(jq -r '.state // empty' "$reply") ;;
+    404) release_state=none ;;
+    *)
+        echo "Couldn't ask Fedora whether Fedora $next is out (HTTP $code); trying again next week." >&2
+        exit 1
+        ;;
+esac
+# "pending" is a release still in beta; "archived" one past its end of life.
+if [[ $release_state != current && $release_state != archived ]]; then
+    echo "On Fedora $current; Fedora $next isn't released yet."
+    exit 0
+fi
+
+mkdir -p "$state_dir"
+seen_file=$state_dir/fedora-$next-released
+[[ -s $seen_file ]] || date +%F >"$seen_file"
+seen=$(<"$seen_file")
+due=$(date -d "$seen + $wait_days days" +%F)
+if [[ $(date +%F) < $due ]]; then
+    echo "On Fedora $current; Fedora $next is out (seen $seen). Upgrading on or after $due."
+    exit 0
+fi
+
+echo "Upgrading from Fedora $current to Fedora $next: $rebase_cmd $target"
+if ! $rebase_cmd "$target"; then
+    echo "The upgrade didn't go through; staying on Fedora $current and trying again next week." >&2
+    exit 1
+fi
+echo "Fedora $next is staged; the next reboot starts it."

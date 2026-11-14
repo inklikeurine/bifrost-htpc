@@ -66,7 +66,7 @@ done
 check "Fedora Flatpak stand-in removed" bash -c "! distrobox enter $box -- flatpak info --system org.kde.kmines"
 check "autologin into Bigscreen" in_box grep -qx 'Session=plasma-bigscreen-wayland.desktop' /etc/plasmalogin.conf.d/50-bifrost-autologin.conf
 check "rpm-ostree stages updates" in_box grep -qx 'AutomaticUpdatePolicy=stage' /etc/rpm-ostreed.conf
-for timer in bifrost-flatpak-update bifrost-update-moonfin bifrost-update-dropout bifrost-weekly-reboot rpm-ostreed-automatic; do
+for timer in bifrost-flatpak-update bifrost-update-moonfin bifrost-update-dropout bifrost-upgrade-fedora bifrost-weekly-reboot rpm-ostreed-automatic; do
     check "$timer.timer enabled" in_box systemctl is-enabled "$timer.timer"
 done
 check "sshd password login off" in_box bash -c "sudo sshd -T | grep -qix 'passwordauthentication no'"
@@ -116,6 +116,27 @@ check "weekly reboot waits while something plays" in_box bash -c \
     "sudo systemd-inhibit --what=idle --who=test --why=playback sleep 20 & sleep 1
      out=\$(sudo env $fake_reboot); kill %1 2>/dev/null
      grep -q 'Something is playing' <<<\"\$out\" && grep -q REBOOT <<<\"\$out\""
+
+# The Fedora upgrade asks the real Bodhi: Fedora 45 is released, Fedora 100 isn't.
+# upgrade_says ORIGIN WAIT_DAYS PATTERN: the output matches PATTERN, and only a
+# REBASE pattern may see a rebase.
+upgrade_says() {
+    local out
+    out=$(in_box env BIFROST_STATE_DIR=/tmp/bifrost-upgrade-test BIFROST_REBASE_CMD="echo REBASE" \
+        BIFROST_OS_ORIGIN="$1" BIFROST_FEDORA_WAIT_DAYS="$2" /usr/local/bin/bifrost-upgrade-fedora) || return 1
+    grep -qE "$3" <<<"$out" || return 1
+    [[ $3 == ^REBASE* ]] || ! grep -q REBASE <<<"$out"
+}
+in_box rm -rf /tmp/bifrost-upgrade-test
+check "Fedora upgrade waits for a release that isn't out" \
+    upgrade_says fedora:fedora/99/x86_64/kinoite 28 "isn't released yet"
+check "Fedora upgrade waits four weeks after a release" \
+    upgrade_says fedora:fedora/44/x86_64/kinoite 28 'Upgrading on or after'
+check "Fedora upgrade rebases the ostree branch after the wait" \
+    upgrade_says fedora:fedora/44/x86_64/kinoite 0 '^REBASE fedora:fedora/45/x86_64/kinoite$'
+check "Fedora upgrade rebases a container image after the wait" \
+    upgrade_says ostree-image-signed:docker://quay.io/fedora/fedora-kinoite:44 0 \
+    '^REBASE ostree-image-signed:docker://quay.io/fedora/fedora-kinoite:45$'
 
 echo "==> Launching the Dropout web app headless (45 s)"
 in_box bash -c 'MOZ_HEADLESS=1 timeout 45 /usr/local/bin/bifrost-webapp dropout https://watch.dropout.tv' >/dev/null 2>&1 || true
