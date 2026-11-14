@@ -101,7 +101,7 @@ check "audio rule prefers the TV" in_box grep -q '"output:hdmi-stereo"' \
 check "login-password wallet set aside before Moonfin's first start" bash -c "
     d='$test_home/.local/share/kwalletd'
     [[ ! -e \$d/kdewallet.kwl ]] && compgen -G \"\$d/backup-*/kdewallet.kwl\""
-check "Bigscreen favorites written"grep -q '^storageId=bifrost-twitch.desktop$' "$test_home/.config/bigscreen-favs"
+check "Bigscreen favorites written" grep -q '^storageId=bifrost-twitch.desktop$' "$test_home/.config/bigscreen-favs"
 check "web-app icons installed" in_box test -f /usr/local/share/icons/hicolor/scalable/apps/bifrost-twitch.svg \
     -a -f /usr/local/share/icons/hicolor/512x512/apps/bifrost-dropout.png
 check "update services run under systemd" in_box bash -c \

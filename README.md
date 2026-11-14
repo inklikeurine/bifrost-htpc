@@ -249,14 +249,14 @@ These need real hardware; the container test can't cover them.
 `tests/` also runs `setup.sh` in a throwaway Kinoite container built from the ISO:
 
 ```bash
-tests/build-test-image.sh ../Fedora-Kinoite-ostree-x86_64-44-1.7.iso
+tests/build-test-image.sh _resources/Fedora-Kinoite-Installer-45-1.4.x86_64.iso
 ```
 
 ```bash
 tests/run-distrobox-test.sh
 ```
 
-The first command turns the ISO's OS tree into a podman image. The second creates a distrobox with its own home directory (your real `~/.config` is never touched), runs the script twice, checks the second run changes nothing, then checks the results, including launching the Dropout web app in headless Firefox and confirming both extensions install.
+The first command turns the ISO's OS tree into a podman image. It reads both the Fedora 45 installer (an EROFS image, mounted read-only in a container through FUSE) and the older Fedora 44 `ostree` ISO. Keep ISOs in `_resources/`, which git ignores. The second creates a distrobox with its own home directory (your real `~/.config` is never touched), runs the script twice, checks the second run changes nothing, then checks the results, including launching the Dropout web app in headless Firefox and confirming both extensions install.
 
 A container can't test rpm-ostree layering, the hostname, `--wifi`, starting `sshd` (the box shares the host's network), or anything that needs a screen. Last run with Kinoite 44.1.7 on 2026-10-19: all 37 checks passed.
 
