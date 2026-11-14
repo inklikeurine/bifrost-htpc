@@ -111,9 +111,9 @@ trap finish EXIT
 trap 'error "line $LINENO: \"$BASH_COMMAND\" failed (exit $?)"' ERR
 
 mapfile -t accounts < <(getent passwd | awk -F: '$3 >= 1000 && $3 < 60000 && $7 !~ /(nologin|false)$/ {print $1}')
-# Wi-Fi and Hostname (optional), 7 system steps, one per account with a home, then
+# Wi-Fi and Hostname (optional), 8 system steps, one per account with a home, then
 # Connect with SSH.
-total=8
+total=9
 for account in "${accounts[@]}"; do
     [[ -d $(getent passwd "$account" | cut -d: -f6) ]] && total=$((total + 1))
 done
@@ -188,6 +188,131 @@ else
     fi
     if rpm-ostree status --json | jq -e '.deployments[0].booted | not' >/dev/null; then
         reboot_needed=true
+    fi
+fi
+
+# ---------------------------------------------------------------------------
+log "Video playback"
+# Fedora leaves H.264 out of its FFmpeg and its video drivers, and Dropout and Twitch
+# stream H.264, so the web apps' Firefox can't play them. RPM Fusion's full FFmpeg plays
+# them on any box, decoding on the CPU. A video driver for the box's graphics moves the
+# decoding to the GPU, which uses less power. See "Video playback" in the README.
+video_drivers=()
+need_nonfree=false
+# Each graphics chip's PCI vendor and device IDs, from /sys/class/drm/card<N>/device.
+mapfile -t gpus < <(for card in /sys/class/drm/card*; do
+    [[ ${card##*/} =~ ^card[0-9]+$ && -r $card/device/vendor ]] || continue
+    echo "$(<"$card/device/vendor") $(<"$card/device/device")"
+done | sort -u)
+for gpu in "${gpus[@]}"; do
+    read -r vendor device <<<"$gpu"
+    case $vendor in
+        0x8086)
+            # Intel. Broadwell (2014) and newer use the iHD driver: Fedora's copy can't
+            # decode H.264 or HEVC, RPM Fusion's (nonfree) can, and installs beside it.
+            # Older chips (device IDs below 0x1600, and the 0x2xxx G45/Braswell range) use
+            # the i965 driver, which only RPM Fusion (free) has.
+            if ((device < 0x1600 || (device >= 0x2000 && device < 0x3000))); then
+                video_drivers+=(libva-intel-driver)
+                note "Intel graphics ($device): hardware decoding with libva-intel-driver"
+            else
+                video_drivers+=(intel-media-driver)
+                need_nonfree=true
+                note "Intel graphics ($device): hardware decoding with intel-media-driver"
+            fi
+            ;;
+        0x1002)
+            # AMD. Fedora's Mesa can't decode H.264 or HEVC; RPM Fusion's freeworld build
+            # installs beside it.
+            video_drivers+=(mesa-va-drivers-freeworld)
+            note "AMD graphics ($device): hardware decoding with mesa-va-drivers-freeworld"
+            ;;
+        0x10de)
+            note "NVIDIA graphics ($device): decoding on the CPU; hardware decoding needs NVIDIA's own driver, which setup doesn't install"
+            ;;
+        *)
+            note "graphics $vendor:$device: no hardware decoding driver known; decoding on the CPU"
+            ;;
+    esac
+done
+((${#gpus[@]})) || note "no graphics chip found; decoding on the CPU"
+mapfile -t video_drivers < <(printf '%s\n' "${video_drivers[@]}" | sort -u | sed '/^$/d')
+
+video_waiting=false
+if ! $booted; then
+    note "not a booted Kinoite system (test container?); skipping the video codecs"
+else
+    fedora=$(rpm -E %fedora)
+    deployment=$(rpm-ostree status --json | jq '.deployments[0]')
+    mapfile -t requested < <(jq -r '(.["requested-packages"] // [])[]' <<<"$deployment")
+    mapfile -t requested_local < <(jq -r '(.["requested-local-packages"] // [])[]' <<<"$deployment")
+    is_requested() { printf '%s\n' "${requested[@]}" | grep -qxF "$1"; }
+
+    # 1. The RPM Fusion repositories. Their release packages are first installed from
+    # RPM Fusion's site and only take effect after a reboot. The run after that swaps
+    # them for the repository's own copies, so they update and follow Fedora upgrades
+    # (RPM Fusion's instructions for rpm-ostree).
+    repos=(free)
+    $need_nonfree && repos+=(nonfree)
+    to_add=()
+    to_swap=()
+    for r in "${repos[@]}"; do
+        pkg=rpmfusion-$r-release
+        if is_requested "$pkg"; then
+            continue
+        elif printf '%s\n' "${requested_local[@]}" | grep -q "^$pkg-[0-9]"; then
+            if rpm -q "$pkg" >/dev/null 2>&1; then to_swap+=("$pkg"); else video_waiting=true; fi
+        elif ! rpm -q "$pkg" >/dev/null 2>&1; then
+            to_add+=("https://mirrors.rpmfusion.org/$r/fedora/$pkg-$fedora.noarch.rpm")
+        fi
+    done
+    if ((${#to_add[@]})); then
+        note "adding the RPM Fusion repositories: ${to_add[*]##*/}"
+        if rpm-ostree install "${to_add[@]}"; then
+            reboot_needed=true
+            video_waiting=true
+        else
+            warn "couldn't add the RPM Fusion repositories; H.264 video (Dropout, Twitch) won't play"
+        fi
+    fi
+
+    if $video_waiting; then
+        note "RPM Fusion starts working after the reboot; the next run adds the video codecs"
+    elif ((${#to_add[@]} == 0)); then
+        if ((${#to_swap[@]})); then
+            note "switching ${to_swap[*]} to the repository's own copies"
+            if rpm-ostree update "${to_swap[@]/#/--uninstall=}" "${to_swap[@]/#/--install=}"; then
+                reboot_needed=true
+            else
+                warn "couldn't switch ${to_swap[*]} to the repository's copies"
+            fi
+        fi
+
+        # 2. Full FFmpeg in place of Fedora's, and the video driver. The packages to
+        # replace are read from what's installed, as Fedora's set changes between releases.
+        installs=()
+        is_requested ffmpeg || installs+=(ffmpeg)
+        for pkg in "${video_drivers[@]}"; do
+            is_requested "$pkg" || installs+=("$pkg")
+        done
+        mapfile -t free_ffmpeg < <(rpm -qa --qf '%{name}\n' | grep -E '^(ffmpeg|libav[a-z]+|libsw[a-z]+|libpostproc)-free$' | sort)
+        if ((${#installs[@]} == 0)); then
+            note "already requested: ffmpeg${video_drivers[*]:+ ${video_drivers[*]}}"
+        elif [[ ${installs[0]} == ffmpeg ]] && ((${#free_ffmpeg[@]})); then
+            note "replacing ${free_ffmpeg[*]} with ffmpeg${installs[1]:+, and adding ${installs[*]:1}}"
+            if rpm-ostree override remove "${free_ffmpeg[@]}" "${installs[@]/#/--install=}"; then
+                reboot_needed=true
+            else
+                warn "couldn't replace Fedora's FFmpeg; H.264 video (Dropout, Twitch) won't play"
+            fi
+        else
+            note "adding ${installs[*]}"
+            if rpm-ostree install "${installs[@]}"; then
+                reboot_needed=true
+            else
+                warn "couldn't add ${installs[*]}"
+            fi
+        fi
     fi
 fi
 
@@ -556,6 +681,10 @@ done
 
 printf '\n==> Done\n'
 if $reboot_needed; then
-    note "Reboot to finish: the new OS image with the layered packages is staged."
-    note "After the reboot, run this script once more to check everything."
+    note "Reboot to finish: a new OS image with the layered packages is staged."
+    if $video_waiting; then
+        note "After the reboot, run this script again: it adds the video codecs, then asks for one more reboot."
+    else
+        note "After the reboot, run this script once more to check everything."
+    fi
 fi
