@@ -12,9 +12,9 @@ One setup that installs and behaves the same on any HTPC, whatever its hardware.
 - **Remote access:** SSH.
 - **TVs on LAN only:** the TVs reach the local network but not the internet. The box supplies every app.
 
-## Machines
+## Development Machines
 
-### Bedroom HTPC
+### ThinkCentre HTPC
 
 | | |
 |---|---|
@@ -29,7 +29,7 @@ One setup that installs and behaves the same on any HTPC, whatever its hardware.
 
 Before the reinstall, copy off anything worth keeping. At minimum, the 12 custom wallpapers in `~/.local/share/wallpapers/`: add them to this repo's `wallpapers/` folder.
 
-### Living Room HTPC
+### OptiPlex HTPC
 
 | | |
 |---|---|
