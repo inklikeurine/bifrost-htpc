@@ -17,5 +17,9 @@ user_pref("browser.tabs.warnOnClose", false);
 user_pref("media.autoplay.default", 0);
 user_pref("permissions.default.desktop-notification", 2);
 
+// Don't offer to save passwords: the prompt can't be closed with the remote, and the
+// sites keep you signed in with cookies anyway.
+user_pref("signon.rememberSignons", false);
+
 // No "press Esc to exit full screen" banner.
 user_pref("full-screen-api.warning.timeout", 0);
