@@ -46,3 +46,6 @@ flatpak list --system --app --columns=application,version
 
 section "Last setup run"
 grep '^=====' /var/log/bifrost-setup.log 2>/dev/null | tail -n1 || echo "none logged"
+if [[ -s /var/lib/bifrost/setup-resume ]]; then
+    echo "Carrying on after the next reboot (runs so far: $(cat /var/lib/bifrost/setup-resume-runs 2>/dev/null || echo 0) of 5); follow with: journalctl -fu bifrost-setup-resume"
+fi

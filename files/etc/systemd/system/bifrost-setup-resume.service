@@ -1,0 +1,16 @@
+[Unit]
+Description=Carry setup on after a reboot, until nothing is left to do (bifrost-htpc)
+Wants=network-online.target
+After=network-online.target rpm-ostreed.service
+# setup.sh turns this on when a run stages a new OS image, and off when nothing is left.
+ConditionPathExists=/var/lib/bifrost/setup-resume
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/bifrost-setup-resume
+# A run can download a new OS image (often 1-2 GB), then wait up to 3 hours for
+# playback to end before rebooting.
+TimeoutStartSec=6h
+
+[Install]
+WantedBy=multi-user.target
