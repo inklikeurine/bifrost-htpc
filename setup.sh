@@ -9,6 +9,9 @@
 #   --room NAME  set the hostname to bifrost-NAME, e.g. --room bedroom
 #   --wifi       ask for a Wi-Fi network and its password, and connect to it
 #
+# When a run stages a new OS image, the box reboots by itself (after a 60 s countdown
+# that Ctrl+C stops), and bifrost-setup-resume runs this script again after each reboot
+# until nothing is left to do. Follow it with: journalctl -fu bifrost-setup-resume
 # /var/log/bifrost-setup.log keeps the last 8 runs: each run's exit code, warnings and errors.
 set -euo pipefail
 
@@ -16,15 +19,19 @@ repo=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 user=${SUDO_USER:-}
 room=""
 wifi=false
+# --resumed: run by bifrost-setup-resume after a reboot. No countdown: that service
+# does the reboot, waiting while something is playing.
+resumed=false
 args=$*
 
-usage() { sed -n '2,13s/^# \{0,1\}//p' "${BASH_SOURCE[0]}"; }
+usage() { sed -n '2,16s/^# \{0,1\}//p' "${BASH_SOURCE[0]}"; }
 
 while (($#)); do
     case $1 in
         --user) user=${2:?--user needs a name}; shift 2 ;;
         --room) room=${2:?--room needs a name}; shift 2 ;;
         --wifi) wifi=true; shift ;;
+        --resumed) resumed=true; shift ;;
         -h | --help) usage; exit 0 ;;
         *) echo "Unknown option: $1" >&2; usage >&2; exit 2 ;;
     esac
@@ -105,15 +112,18 @@ finish() {
         awk -v skip=$((runs - 8)) '/^===== /{n++} n>skip' "$setup_log" >"$tmp" && cat "$tmp" >"$setup_log"
     fi
     rm -f "$tmp" "$notes"
+    # Only after the log is written, and only after a run that went through.
+    if $reboot_now && ((code == 0)); then systemctl reboot; fi
 }
+reboot_now=false
 trap finish EXIT
 # A command that stops the script (set -e) gets logged with its line number.
 trap 'error "line $LINENO: \"$BASH_COMMAND\" failed (exit $?)"' ERR
 
 mapfile -t accounts < <(getent passwd | awk -F: '$3 >= 1000 && $3 < 60000 && $7 !~ /(nologin|false)$/ {print $1}')
-# Wi-Fi and Hostname (optional), 7 system steps, one per account with a home, then
+# Wi-Fi and Hostname (optional), 8 system steps, one per account with a home, then
 # Connect with SSH.
-total=8
+total=9
 for account in "${accounts[@]}"; do
     [[ -d $(getent passwd "$account" | cut -d: -f6) ]] && total=$((total + 1))
 done
@@ -128,6 +138,11 @@ booted=false
 systemd_up=false
 [[ -d /run/systemd/system ]] && systemd_up=true
 reboot_needed=false
+# jq: true if the newest deployment is staged and requests packages or removals that the
+# booted one doesn't.
+# shellcheck disable=SC2016 # $d is jq's, not the shell's
+staged_changes='def req: [.["requested-packages"], .["requested-local-packages"], .["requested-base-removals"]] | map(. // [] | sort);
+    .deployments as $d | ($d[0].booted | not) and ($d[0] | req) != ($d[] | select(.booted) | req)'
 
 # ---------------------------------------------------------------------------
 if $wifi; then
@@ -186,8 +201,136 @@ else
     else
         note "already requested: ${packages[*]}"
     fi
-    if rpm-ostree status --json | jq -e '.deployments[0].booted | not' >/dev/null; then
+    # A staged image with packages the running one lacks (from an earlier run) needs a
+    # reboot. One that differs only by a newer Fedora (the daily update, or a Fedora
+    # upgrade) doesn't: the weekly reboot applies it.
+    if rpm-ostree status --json | jq -e "$staged_changes" >/dev/null; then
         reboot_needed=true
+    fi
+fi
+
+# ---------------------------------------------------------------------------
+log "Video playback"
+# Fedora leaves H.264 out of its FFmpeg and its video drivers, and Dropout and Twitch
+# stream H.264, so the web apps' Firefox can't play them. RPM Fusion's full FFmpeg plays
+# them on any box, decoding on the CPU. A video driver for the box's graphics moves the
+# decoding to the GPU, which uses less power. See "Video playback" in the README.
+video_drivers=()
+need_nonfree=false
+# Each graphics chip's PCI vendor and device IDs, from /sys/class/drm/card<N>/device.
+mapfile -t gpus < <(for card in /sys/class/drm/card*; do
+    [[ ${card##*/} =~ ^card[0-9]+$ && -r $card/device/vendor ]] || continue
+    echo "$(<"$card/device/vendor") $(<"$card/device/device")"
+done | sort -u)
+for gpu in "${gpus[@]}"; do
+    read -r vendor device <<<"$gpu"
+    case $vendor in
+        0x8086)
+            # Intel. Broadwell (2014) and newer use the iHD driver: Fedora's copy can't
+            # decode H.264 or HEVC, RPM Fusion's (nonfree) can, and installs beside it.
+            # Older chips (device IDs below 0x1600, and the 0x2xxx G45/Braswell range) use
+            # the i965 driver, which only RPM Fusion (free) has.
+            if ((device < 0x1600 || (device >= 0x2000 && device < 0x3000))); then
+                video_drivers+=(libva-intel-driver)
+                note "Intel graphics ($device): hardware decoding with libva-intel-driver"
+            else
+                video_drivers+=(intel-media-driver)
+                need_nonfree=true
+                note "Intel graphics ($device): hardware decoding with intel-media-driver"
+            fi
+            ;;
+        0x1002)
+            # AMD. Fedora's Mesa can't decode H.264 or HEVC; RPM Fusion's freeworld build
+            # installs beside it.
+            video_drivers+=(mesa-va-drivers-freeworld)
+            note "AMD graphics ($device): hardware decoding with mesa-va-drivers-freeworld"
+            ;;
+        0x10de)
+            note "NVIDIA graphics ($device): decoding on the CPU; hardware decoding needs NVIDIA's own driver, which setup doesn't install"
+            ;;
+        *)
+            note "graphics $vendor:$device: no hardware decoding driver known; decoding on the CPU"
+            ;;
+    esac
+done
+((${#gpus[@]})) || note "no graphics chip found; decoding on the CPU"
+mapfile -t video_drivers < <(printf '%s\n' "${video_drivers[@]}" | sort -u | sed '/^$/d')
+
+video_waiting=false
+if ! $booted; then
+    note "not a booted Kinoite system (test container?); skipping the video codecs"
+else
+    fedora=$(rpm -E %fedora)
+    deployment=$(rpm-ostree status --json | jq '.deployments[0]')
+    mapfile -t requested < <(jq -r '(.["requested-packages"] // [])[]' <<<"$deployment")
+    mapfile -t requested_local < <(jq -r '(.["requested-local-packages"] // [])[]' <<<"$deployment")
+    is_requested() { printf '%s\n' "${requested[@]}" | grep -qxF "$1"; }
+
+    # 1. The RPM Fusion repositories. Their release packages are first installed from
+    # RPM Fusion's site and only take effect after a reboot. The run after that swaps
+    # them for the repository's own copies, so they update and follow Fedora upgrades
+    # (RPM Fusion's instructions for rpm-ostree).
+    repos=(free)
+    $need_nonfree && repos+=(nonfree)
+    to_add=()
+    to_swap=()
+    for r in "${repos[@]}"; do
+        pkg=rpmfusion-$r-release
+        if is_requested "$pkg"; then
+            continue
+        elif printf '%s\n' "${requested_local[@]}" | grep -q "^$pkg-[0-9]"; then
+            if rpm -q "$pkg" >/dev/null 2>&1; then to_swap+=("$pkg"); else video_waiting=true; fi
+        elif ! rpm -q "$pkg" >/dev/null 2>&1; then
+            to_add+=("https://mirrors.rpmfusion.org/$r/fedora/$pkg-$fedora.noarch.rpm")
+        fi
+    done
+    if ((${#to_add[@]})); then
+        note "adding the RPM Fusion repositories: ${to_add[*]##*/}"
+        if rpm-ostree install "${to_add[@]}"; then
+            reboot_needed=true
+            video_waiting=true
+        else
+            warn "couldn't add the RPM Fusion repositories; H.264 video (Dropout, Twitch) won't play"
+        fi
+    fi
+
+    if $video_waiting; then
+        note "RPM Fusion starts working after the reboot; the next run adds the video codecs"
+    elif ((${#to_add[@]} == 0)); then
+        if ((${#to_swap[@]})); then
+            note "switching ${to_swap[*]} to the repository's own copies"
+            if rpm-ostree update "${to_swap[@]/#/--uninstall=}" "${to_swap[@]/#/--install=}"; then
+                reboot_needed=true
+            else
+                warn "couldn't switch ${to_swap[*]} to the repository's copies"
+            fi
+        fi
+
+        # 2. Full FFmpeg in place of Fedora's, and the video driver. The packages to
+        # replace are read from what's installed, as Fedora's set changes between releases.
+        installs=()
+        is_requested ffmpeg || installs+=(ffmpeg)
+        for pkg in "${video_drivers[@]}"; do
+            is_requested "$pkg" || installs+=("$pkg")
+        done
+        mapfile -t free_ffmpeg < <(rpm -qa --qf '%{name}\n' | grep -E '^(ffmpeg|libav[a-z]+|libsw[a-z]+|libpostproc)-free$' | sort)
+        if ((${#installs[@]} == 0)); then
+            note "already requested: ffmpeg${video_drivers[*]:+ ${video_drivers[*]}}"
+        elif [[ ${installs[0]} == ffmpeg ]] && ((${#free_ffmpeg[@]})); then
+            note "replacing ${free_ffmpeg[*]} with ffmpeg${installs[1]:+, and adding ${installs[*]:1}}"
+            if rpm-ostree override remove "${free_ffmpeg[@]}" "${installs[@]/#/--install=}"; then
+                reboot_needed=true
+            else
+                warn "couldn't replace Fedora's FFmpeg; H.264 video (Dropout, Twitch) won't play"
+            fi
+        else
+            note "adding ${installs[*]}"
+            if rpm-ostree install "${installs[@]}"; then
+                reboot_needed=true
+            else
+                warn "couldn't add ${installs[*]}"
+            fi
+        fi
     fi
 fi
 
@@ -555,7 +698,27 @@ for key in /etc/ssh/ssh_host_*_key.pub; do
 done
 
 printf '\n==> Done\n'
+# Carrying on after a reboot: bifrost-setup-resume.service runs at the next boot while
+# /var/lib/bifrost/setup-resume says where this checkout is and which account to set up.
+resume_file=/var/lib/bifrost/setup-resume
 if $reboot_needed; then
-    note "Reboot to finish: the new OS image with the layered packages is staged."
-    note "After the reboot, run this script once more to check everything."
+    install -d -m 0755 /var/lib/bifrost
+    printf 'repo=%s\nuser=%s\n' "$repo" "$user" >"$resume_file"
+    systemctl enable --quiet bifrost-setup-resume.service
+    note "A new OS image is staged. After the reboot, setup runs again by itself until nothing is left to do."
+    $video_waiting && note "The next run adds the video codecs, which needs one more reboot."
+    note "Follow it over SSH with: journalctl -fu bifrost-setup-resume"
+    if $resumed; then
+        note "Rebooting (bifrost-setup-resume waits while something is playing)."
+    else
+        note "Rebooting in 60 s. Press Ctrl+C to reboot later yourself; setup still carries on after that reboot."
+        trap 'printf "\n"; note "Not rebooting now. Reboot when ready: setup carries on by itself."; exit 0' INT
+        sleep 60
+        trap - INT
+        reboot_now=true
+    fi
+elif [[ -e $resume_file ]] || systemctl is-enabled --quiet bifrost-setup-resume.service 2>/dev/null; then
+    rm -f "$resume_file" /var/lib/bifrost/setup-resume-runs
+    systemctl disable --quiet bifrost-setup-resume.service 2>/dev/null || true
+    note "Setup is complete: nothing left to do after a reboot."
 fi

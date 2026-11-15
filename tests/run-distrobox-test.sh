@@ -66,6 +66,9 @@ done
 check "Fedora Flatpak stand-in removed" bash -c "! distrobox enter $box -- flatpak info --system org.kde.kmines"
 check "autologin into Bigscreen" in_box grep -qx 'Session=plasma-bigscreen-wayland.desktop' /etc/plasmalogin.conf.d/50-bifrost-autologin.conf
 check "rpm-ostree stages updates" in_box grep -qx 'AutomaticUpdatePolicy=stage' /etc/rpm-ostreed.conf
+check "video codecs skipped cleanly outside a booted Kinoite" bash -c \
+    "grep -q 'skipping the video codecs' '$logs/run2.log' && ! grep -qi 'rpmfusion\|override' '$logs/run2.log'"
+check "bifrost-status reports the video codecs" in_box bash -c "/usr/local/bin/bifrost-status | grep -q '^FFmpeg: '"
 for timer in bifrost-flatpak-update bifrost-update-moonfin bifrost-update-dropout bifrost-upgrade-fedora bifrost-weekly-reboot rpm-ostreed-automatic; do
     check "$timer.timer enabled" in_box systemctl is-enabled "$timer.timer"
 done
@@ -141,6 +144,32 @@ check "Fedora upgrade rebases the ostree branch after the wait" \
 check "Fedora upgrade rebases a container image after the wait" \
     upgrade_says ostree-image-signed:docker://quay.io/fedora/fedora-kinoite:44 0 \
     '^REBASE ostree-image-signed:docker://quay.io/fedora/fedora-kinoite:45$'
+
+check "carry-on service off when nothing needs a reboot" bash -c \
+    "! distrobox enter $box -- systemctl is-enabled --quiet bifrost-setup-resume.service"
+# bifrost-setup-resume with a stand-in setup.sh that either stages more (keeps the
+# resume file) or finishes (removes it), and an echo in place of the reboot.
+# resume_says MODE RUNS_SO_FAR PATTERN: the output matches PATTERN, and only a REBOOT
+# pattern may see a reboot.
+in_box bash -c 'cat >/tmp/fake-setup.sh <<"EOF"
+#!/usr/bin/bash
+[[ " $* " == *" --resumed "* && " $* " == *" --user "* ]] || { echo "bad args: $*"; exit 2; }
+[[ $FAKE_MODE == finish ]] && rm -f /tmp/bifrost-resume-test/setup-resume
+exit 0
+EOF'
+resume_says() {
+    local out
+    out=$(in_box sudo bash -c "rm -rf /tmp/bifrost-resume-test && mkdir -p /tmp/bifrost-resume-test &&
+        printf 'repo=/tmp\nuser=$USER\n' >/tmp/bifrost-resume-test/setup-resume &&
+        { [[ $2 == 0 ]] || echo $2 >/tmp/bifrost-resume-test/setup-resume-runs; } &&
+        FAKE_MODE=$1 BIFROST_STATE_DIR=/tmp/bifrost-resume-test BIFROST_SETUP_CMD=/tmp/fake-setup.sh \
+        BIFROST_RESUME_REBOOT_CMD='echo REBOOT' /usr/local/bin/bifrost-setup-resume 2>&1") || true
+    grep -qE "$3" <<<"$out" || return 1
+    [[ $3 == *REBOOT* ]] || ! grep -q REBOOT <<<"$out"
+}
+check "carry-on reboots again when setup stages more" resume_says more 0 '^REBOOT$'
+check "carry-on stops when setup has nothing left" resume_says finish 1 '^Setup is complete'
+check "carry-on gives up after 5 runs" resume_says more 5 'after 5 runs'
 
 echo "==> Launching the Dropout web app headless (45 s)"
 in_box bash -c 'MOZ_HEADLESS=1 timeout 45 /usr/local/bin/bifrost-webapp dropout https://watch.dropout.tv' >/dev/null 2>&1 || true

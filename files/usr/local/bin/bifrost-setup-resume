@@ -1,0 +1,83 @@
+#!/usr/bin/bash
+# Carry setup on after a reboot, until nothing is left to do.
+#
+# setup.sh turns on bifrost-setup-resume.service, and writes /var/lib/bifrost/setup-resume
+# (the checkout and the account), whenever a run stages a new OS image. At the next
+# boot this runs setup.sh again. If that run stages another image, it reboots, waiting
+# while something is playing like the weekly reboot. When a run has nothing left to
+# do, setup.sh removes the file and turns the service off. After 5 runs without
+# finishing, this gives up so the box can't keep rebooting.
+set -uo pipefail
+
+# Overridable for tests.
+state_dir=${BIFROST_STATE_DIR:-/var/lib/bifrost}
+max_runs=${BIFROST_RESUME_MAX_RUNS:-5}
+online_wait=${BIFROST_ONLINE_WAIT:-600}
+reboot_cmd=${BIFROST_RESUME_REBOOT_CMD:-/usr/local/bin/bifrost-reboot}
+
+resume_file=$state_dir/setup-resume
+runs_file=$state_dir/setup-resume-runs
+stop() {
+    rm -f "$resume_file" "$runs_file"
+    systemctl disable --quiet bifrost-setup-resume.service 2>/dev/null || true
+}
+
+if [[ ! -s $resume_file ]]; then
+    echo "Nothing to carry on with; turning this service off."
+    stop
+    exit 0
+fi
+repo=$(sed -n 's/^repo=//p' "$resume_file")
+user=$(sed -n 's/^user=//p' "$resume_file")
+setup_cmd=${BIFROST_SETUP_CMD:-$repo/setup.sh}
+if [[ ! -f $setup_cmd ]]; then
+    echo "setup.sh isn't at $setup_cmd any more; stopping. Run it by hand." >&2
+    stop
+    exit 1
+fi
+
+runs=$(($(cat "$runs_file" 2>/dev/null || echo 0) + 1))
+if ((runs > max_runs)); then
+    echo "Setup still wanted a reboot after $max_runs runs; stopping so the box doesn't keep rebooting." >&2
+    echo "See /var/log/bifrost-setup.log and journalctl -u bifrost-setup-resume, then run setup.sh by hand." >&2
+    stop
+    exit 1
+fi
+echo "$runs" >"$runs_file"
+
+# Wi-Fi can take a while after boot, and setup stops without the internet.
+waited=0
+until curl -fsS -o /dev/null --max-time 15 https://dl.flathub.org/repo/flathub.flatpakrepo; do
+    if ((waited >= online_wait)); then
+        echo "No internet after $((online_wait / 60)) min; trying again at the next boot." >&2
+        exit 1
+    fi
+    sleep 30
+    waited=$((waited + 30))
+done
+
+# Kinoite's own daily update can hold rpm-ostree, and setup's rpm-ostree steps would
+# fail on "transaction in progress". Pause it for this run.
+timer_was_on=false
+if systemctl is-active --quiet rpm-ostreed-automatic.timer; then
+    timer_was_on=true
+    systemctl stop rpm-ostreed-automatic.timer
+fi
+while systemctl is-active --quiet rpm-ostreed-automatic.service; do sleep 10; done
+
+echo "Run $runs of at most $max_runs: $setup_cmd --user $user --resumed"
+bash "$setup_cmd" --user "$user" --resumed
+code=$?
+$timer_was_on && systemctl start rpm-ostreed-automatic.timer
+
+if ((code != 0)); then
+    echo "Setup stopped with exit code $code; trying again at the next boot. See /var/log/bifrost-setup.log." >&2
+    exit "$code"
+fi
+if [[ -s $resume_file ]]; then
+    # setup.sh staged another OS image and wants one more reboot.
+    $reboot_cmd
+else
+    echo "Setup is complete."
+    rm -f "$runs_file"
+fi
