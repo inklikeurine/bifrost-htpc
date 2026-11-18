@@ -52,7 +52,7 @@ Before the reinstall, copy off anything worth keeping. At minimum, the 12 custom
 **A git repo with one setup script, run on a fresh Kinoite install.**
 
 - **Making changes:** edit the repo, then re-run the script on each box. Re-running is harmless.
-  - Later, once the repo is stable: maybe have each box pull the repo and re-run the script weekly.
+  - Boxes keeping themselves up to date from the repo: [#17](https://github.com/inklikeurine/bifrost-htpc/issues/17)
 - **Maintenance:** Fedora builds and ships the OS. You only touch the repo when you change apps or settings.
 - **Nothing machine-specific in the repo.** The hostname and Wi-Fi come from script options (`--room`, `--wifi`),
   so every box runs the same files. Screen resolution and IP are set by hand if needed.
@@ -277,7 +277,7 @@ sandbox paths.
 | Jellyfin | Moonfin (Flatpak bundle, see below) | Turn on Moonfin's TV mode on each box |
 | Moonlight | Moonlight (Flatpak `com.moonlight_stream.Moonlight`) | Preferred game streaming app |
 | Steam Link | Steam Link (Flatpak `com.valvesoftware.SteamLink`) | Backup to Moonlight |
-| Twitch | twitch.tv in Firefox, full screen, with uBlock Origin | Maybe develop a simple Leanback UI later |
+| Twitch | twitch.tv in Firefox, full screen, with uBlock Origin | A TV-style interface: [#18](https://github.com/inklikeurine/bifrost-htpc/issues/18) |
 | Dropout | dropout.tv in Firefox, full screen, with your extension | The extension supplies the 10-foot UI |
 
 **The "web apps":** each is a launcher that opens Firefox in kiosk mode (full screen, no toolbars) with its own profile: `bifrost-webapp twitch https://www.twitch.tv` runs `firefox --kiosk --no-remote --class bifrost-twitch --profile ~/.local/share/bifrost/firefox/twitch https://www.twitch.tv`. The profile is created on first launch, and `firefox-user.js` is copied into it on every launch: no first-run pages, no restore-session prompt after the weekly reboot, autoplay on, notification prompts off, no offer to save passwords (its prompt can't be closed with the remote). Both show up as normal tiles in Bigscreen with their own icons, and `--class` makes the open window use the launcher's icon too. The icons are in `files/usr/local/share/icons/hicolor/`: Dropout's comes from dropout.tv's web-app manifest, and Twitch's is the [Simple Icons](https://simpleicons.org) glitch logo on a purple circle. Kinoite's Firefox plays VP9 and AV1 out of the box, but not H.264, which Dropout and Twitch both stream: setup adds it (see Video playback).
